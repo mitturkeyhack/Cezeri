@@ -77,8 +77,30 @@ fun Uygulama(vm: Asistan, d: Durum) {
             is Ekran.AramaOnay -> AramaOnayEkrani(vm, e.kisi)
             is Ekran.MesajOnay -> MesajOnayEkrani(vm, e)
         }
-        AnimatedVisibility(d.dinliyor && d.ekran !is Ekran.Kurulum, enter = fadeIn(), exit = fadeOut()) {
+        val tamEkran = d.ekran == Ekran.Ana || d.ekran == Ekran.Sohbet
+        AnimatedVisibility(d.dinliyor && tamEkran, enter = fadeIn(), exit = fadeOut()) {
             DinliyorKatmani(vm, d)
+        }
+        // Onay ve seçim ekranlarında seçenekler görünür kalsın: altta küçük dinleme şeridi
+        AnimatedVisibility(
+            d.dinliyor && !tamEkran && d.ekran !is Ekran.Kurulum,
+            enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().background(Renk.ZeminDerin).border(1.dp, Renk.TurkuazCizgi)
+                    .clickable { vm.dinlemeyiBirak() }
+                    .navigationBarsPadding().padding(horizontal = 22.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(10.dp).clip(CircleShape).background(Renk.Turkuaz))
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    if (d.araMetin.isBlank()) "Dinliyorum…" else "“${d.araMetin}”",
+                    style = govde(16.sp, Renk.TurkuazYazi, FontWeight.Medium), modifier = Modifier.weight(1f)
+                )
+                Dalga(d.seviye, yukseklik = 28.dp)
+            }
         }
     }
 }
@@ -153,7 +175,7 @@ private fun durumYazisi(d: Durum): String = when {
     d.akil == Akil.Durum.HAZIR -> "Mikrofona dokun ve konuş"
     d.akil == Akil.Durum.YUKLENIYOR -> "Aklını topluyor…"
     d.model is ModelIndirici.Durum.Iniyor -> {
-        val m = d.model as ModelIndirici.Durum.Iniyor
+        val m = d.model
         "Hazırlanıyor · %" + (m.inen * 100 / maxOf(1L, m.toplam))
     }
     d.akil == Akil.Durum.HATA -> "Akıl yüklenemedi · Komutlar çalışıyor"
