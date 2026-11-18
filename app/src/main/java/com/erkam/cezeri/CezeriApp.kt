@@ -1,0 +1,29 @@
+package com.erkam.cezeri
+
+import android.app.Application
+import com.erkam.cezeri.core.Akil
+import com.erkam.cezeri.core.Eylem
+import com.erkam.cezeri.core.Hafiza
+import com.erkam.cezeri.core.ModelIndirici
+import com.erkam.cezeri.core.Rehber
+import com.erkam.cezeri.core.Ses
+
+class CezeriApp : Application() {
+    lateinit var ses: Ses; private set
+    lateinit var akil: Akil; private set
+    lateinit var model: ModelIndirici; private set
+    lateinit var rehber: Rehber; private set
+    lateinit var eylem: Eylem; private set
+    lateinit var hafiza: Hafiza; private set
+
+    override fun onCreate() {
+        super.onCreate()
+        ses = Ses(this)
+        akil = Akil(this)
+        model = ModelIndirici(this)
+        rehber = Rehber(this)
+        eylem = Eylem(this)
+        hafiza = Hafiza(this)
+        model.devamEt()
+    }
+}

@@ -1,0 +1,52 @@
+name: APK derle
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Yazı tiplerini indir (açık lisanslı Google Fonts)
+        continue-on-error: true
+        run: |
+          mkdir -p app/src/main/assets/fonts
+          curl -fsSL -o app/src/main/assets/fonts/cormorant.ttf "https://github.com/google/fonts/raw/main/ofl/cormorantgaramond/CormorantGaramond%5Bwght%5D.ttf" || true
+          curl -fsSL -o app/src/main/assets/fonts/inter.ttf "https://github.com/google/fonts/raw/main/ofl/inter/Inter%5Bopsz,wght%5D.ttf" || true
+          ls -la app/src/main/assets/fonts
+
+      - name: Derle
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: APK'yı hazırla
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk out/Cezeri.apk
+          ls -la out
+
+      - name: GitHub Releases'e yükle
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Cezerî 1.0.${{ github.run_number }}
+          body: |
+            Cezerî — Aşama 1 (konuşma, arama, SMS, sohbet).
+            İndir: Cezeri.apk
+          files: out/Cezeri.apk
+          make_latest: true
