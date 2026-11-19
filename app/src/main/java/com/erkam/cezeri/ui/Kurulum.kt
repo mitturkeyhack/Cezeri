@@ -77,10 +77,10 @@ fun KurulumHosgeldin(vm: Asistan) {
     }
 }
 
-private data class IzinSatiri(val ad: String, val neden: String, val ikon: String, val izin: String?, val ozel: String? = null)
+private data class IzinSatiri(val ad: String, val neden: String, val ikon: String, val izin: String?, val ozel: String? = null, val ekIzinler: List<String> = emptyList())
 
 private fun izinVar(ctx: Context, s: IzinSatiri): Boolean = when {
-    s.izin != null -> ContextCompat.checkSelfPermission(ctx, s.izin) == PackageManager.PERMISSION_GRANTED
+    s.izin != null -> (listOf(s.izin) + s.ekIzinler).all { ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED }
     s.ozel == "pil" -> ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName)
     else -> false
 }
@@ -95,6 +95,7 @@ fun KurulumIzinler(vm: Asistan) {
             IzinSatiri("Rehber", "Kişileri doğru bulmam için", Ik.KISI, Manifest.permission.READ_CONTACTS),
             IzinSatiri("Telefon", "Senin için arama yapabilmem için", Ik.TELEFON, Manifest.permission.CALL_PHONE),
             IzinSatiri("SMS", "Senin yerine mesaj göndermem için", Ik.MESAJ, Manifest.permission.SEND_SMS),
+            IzinSatiri("Gelen aramalar", "Kimin aradığını söyleyip sesle açabilmem için", Ik.ZIL, Manifest.permission.READ_PHONE_STATE, ekIzinler = listOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.ANSWER_PHONE_CALLS)),
             IzinSatiri("Bildirimler", "Hazırlık durumunu gösterebilmem için", Ik.ZIL, Manifest.permission.POST_NOTIFICATIONS),
             IzinSatiri("Pil: Kısıtlanmamış", "Arka planda kapanmamam için", Ik.PIL, null, "pil"),
         )
@@ -107,7 +108,7 @@ fun KurulumIzinler(vm: Asistan) {
             "SMS" to "Senin yerine mesaj gönderebilmem için SMS iznine ihtiyacım var.",
         )
     }
-    val baslatici = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { yenile++ }
+    val baslatici = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { yenile++ }
     // Ayarlardan dönünce durumları yenile
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
@@ -121,7 +122,7 @@ fun KurulumIzinler(vm: Asistan) {
 
     fun iste(s: IzinSatiri) {
         sesler[s.ad]?.let { vm.konusKisa(it) }
-        if (s.izin != null) baslatici.launch(s.izin)
+        if (s.izin != null) baslatici.launch((listOf(s.izin) + s.ekIzinler).toTypedArray())
         else if (s.ozel == "pil") {
             try {
                 ctx.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + ctx.packageName)))

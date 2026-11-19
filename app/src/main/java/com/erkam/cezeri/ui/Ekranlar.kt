@@ -77,6 +77,7 @@ fun Uygulama(vm: Asistan, d: Durum) {
             is Ekran.AramaOnay -> AramaOnayEkrani(vm, e.kisi)
             is Ekran.MesajOnay -> MesajOnayEkrani(vm, e)
             Ekran.Ayarlar -> AyarlarEkrani(vm, d)
+            is Ekran.GelenArama -> GelenAramaEkrani(vm, e)
             is Ekran.SesKaydi -> SesKaydiEkrani(vm, e)
         }
         val tamEkran = d.ekran == Ekran.Ana || d.ekran == Ekran.Sohbet
@@ -527,5 +528,57 @@ fun SohbetEkrani(vm: Asistan, d: Durum) {
             }
         }
         GirisCubugu(vm, "Bir şey sor…")
+    }
+}
+
+// ------------------------------------------------------------------ Gelen arama
+
+@Composable
+fun GelenAramaEkrani(vm: Asistan, e: Ekran.GelenArama) {
+    Column(
+        Modifier.fillMaxSize().background(Renk.ZeminDerin).statusBarsPadding().navigationBarsPadding()
+            .padding(horizontal = 22.dp, vertical = 30.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("GELEN ARAMA", style = etiket())
+        Spacer(Modifier.height(70.dp))
+        Box(Modifier.size(132.dp).clip(CircleShape).border(1.5.dp, Renk.Altin, CircleShape).background(Renk.AltinZemin), contentAlignment = Alignment.Center) {
+            Text(e.kim.take(1).uppercase(Turkce.TR), style = baslik(52.sp, Renk.Altin).copy(fontWeight = FontWeight.Bold))
+        }
+        Spacer(Modifier.height(28.dp))
+        Text(e.kim, style = baslik(38.sp), textAlign = TextAlign.Center)
+        if (e.numara.isNotBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text(e.numara, style = govde(15.sp, Renk.Soluk))
+        }
+        Spacer(Modifier.height(30.dp))
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Renk.Kart)
+                .border(1.dp, Renk.AltinIs, RoundedCornerShape(18.dp)).padding(16.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            KucukAmblem(34.dp)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("“${e.kim} arıyor. Açayım mı?”", style = baslik(21.sp))
+                Spacer(Modifier.height(6.dp))
+                Text("“Aç”, “reddet” ya da “meşgulüm de” diyebilirsin.", style = govde(13.sp, Renk.Soluk))
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        SadeDugme("“Müsait değilim, sonra ararım” yaz", Modifier.fillMaxWidth(), 48.dp) { vm.aramaMesgul() }
+        Spacer(Modifier.height(20.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                YuvarlakDugme(Ik.TELEFON, "Reddet", 72.dp, Renk.Kirmizi, Color.White, cerceve = false, ikonBoyut = 28.dp) { vm.aramaReddet() }
+                Spacer(Modifier.height(8.dp))
+                Text("Reddet", style = govde(13.sp, Renk.Soluk))
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                YuvarlakDugme(Ik.TELEFON, "Aç", 72.dp, Renk.Turkuaz, Renk.ZeminDerin, cerceve = false, ikonBoyut = 28.dp) { vm.aramaAc() }
+                Spacer(Modifier.height(8.dp))
+                Text("Aç", style = govde(13.sp, Renk.Soluk))
+            }
+        }
     }
 }

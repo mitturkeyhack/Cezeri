@@ -1,6 +1,9 @@
 package com.erkam.cezeri
 
 import android.speech.SpeechRecognizer
+import com.erkam.cezeri.asistan.AramaKontrol
+import com.erkam.cezeri.asistan.WhatsappErisim
+import com.erkam.cezeri.asistan.WhatsappGonderim
 import com.erkam.cezeri.core.Akil
 import com.erkam.cezeri.core.Kanal
 import com.erkam.cezeri.core.Kisi
@@ -30,6 +33,7 @@ sealed interface Ekran {
     data class AramaOnay(val kisi: Kisi) : Ekran
     data class MesajOnay(val kisi: Kisi, val metin: String, val kanal: Kanal) : Ekran
     data object Ayarlar : Ekran
+    data class GelenArama(val kim: String, val numara: String) : Ekran
     data class SesKaydi(val adim: Int, val toplam: Int, val mesaj: String, val bitti: Boolean = false) : Ekran
 }
 
@@ -52,6 +56,7 @@ data class Durum(
     val uyanmaAcik: Boolean = false,
     val kimlikOrnek: Int = 0,
     val derinMod: Boolean = false,
+    val aramaHaber: Boolean = true,
     val derinModel: ModelIndirici.Durum = ModelIndirici.Durum.Yok,
     val uyanmaHassasiyet: Float = 0.5f,
 )
@@ -80,6 +85,7 @@ class Asistan(private val a: CezeriApp) {
         data class Secim(val secenekler: List<Kisi>, val sec: (Kisi) -> Unit, val deneme: Int = 0) : Bekleyen
         data class Govde(val kisi: Kisi, val kanal: Kanal?) : Bekleyen
         data class AlarmSaati(val deneme: Int = 0) : Bekleyen
+        data class Arama(val numara: String?, val deneme: Int = 0) : Bekleyen
     }
 
     private val uyanma = a.uyanma
@@ -93,7 +99,7 @@ class Asistan(private val a: CezeriApp) {
 
     init {
         akil.araclar = com.erkam.cezeri.core.CezeriAraclari { rehberBul(it) }
-        _durum.update { it.copy(derinMod = derinIstek) }
+        _durum.update { it.copy(derinMod = derinIstek, aramaHaber = prefs.getBoolean("arama_haber", true)) }
         if (derinIstek && a.modelDerin.hazirMi()) scope.launch { akil.yukle(a.modelDerin.dosya) }
         scope.launch { kulak.dinliyor.collect { v -> _durum.update { it.copy(dinliyor = v) } } }
         scope.launch { kulak.araMetin.collect { v -> _durum.update { it.copy(araMetin = v) } } }
@@ -403,8 +409,23 @@ class Asistan(private val a: CezeriApp) {
                 } else soyle("Mesaj gönderilemedi. SMS iznini kontrol eder misin?")
             }
             Kanal.WHATSAPP -> {
-                soyle("WhatsApp'ta mesajını hazırladım. Göndermek için gönder tuşuna basman yeterli.") {
-                    if (eylem.whatsapp(k.numara, metin)) hafiza.isEkle("mesaj", "${Turkce.ekle(k.ad, belirtme = false)} WhatsApp mesajı", "WhatsApp")
+                if (WhatsappErisim.acikMi(a)) {
+                    WhatsappGonderim.bekle { ok ->
+                        if (ok) {
+                            hafiza.isEkle("mesaj", "${kime(k, belirtme = false)} WhatsApp mesajı gönderdi", "WhatsApp"); isleriYenile()
+                            soyle("Mesajını WhatsApp'tan gönderdim.")
+                        }
+                    }
+                    if (!eylem.whatsapp(k.numara, metin)) {
+                        WhatsappGonderim.tamam(false); soyle("WhatsApp açılamadı.")
+                    } else scope.launch {
+                        delay(15_000)
+                        if (WhatsappGonderim.bekliyor()) { WhatsappGonderim.tamam(false); soyle("Gönder tuşunu bulamadım, sen basar mısın?") }
+                    }
+                } else {
+                    soyle("WhatsApp'ta mesajını hazırladım, gönder tuşuna basman yeterli. Ayarlardan WhatsApp otomatik gönderimi açarsan bunu da ben yaparım.") {
+                        if (eylem.whatsapp(k.numara, metin)) hafiza.isEkle("mesaj", "${kime(k, belirtme = false)} WhatsApp mesajı", "WhatsApp")
+                    }
                 }
             }
         }
@@ -454,6 +475,16 @@ class Asistan(private val a: CezeriApp) {
                 val m = metin.trim().replaceFirstChar { it.titlecase(Turkce.TR) }
                 mesajOnayla(b.kisi, m, b.kanal ?: Kanal.SMS)
             }
+            is Bekleyen.Arama -> {
+                val t = Turkce.norm(metin)
+                when {
+                    Regex("mesgul|musait degil|sonra ara|toplanti|yazarsin|mesaj at").containsMatchIn(t) -> aramaMesgul()
+                    Regex("\\b(reddet|kapat|acma|istemiyorum|hayir|bosver|sustur)\\b").containsMatchIn(t) -> aramaReddet()
+                    Regex("\\b(ac|cevapla|evet|olur|tamam|ac bakalim|baglan)\\b").containsMatchIn(t) -> aramaAc()
+                    b.deneme >= 1 || metin.isBlank() && b.deneme >= 1 -> { bekleyen = null; AramaKontrol.ziliAc(a) }
+                    else -> { bekleyen = b.copy(deneme = b.deneme + 1); sorVeDinle("Açayım mı, reddedeyim mi?") }
+                }
+            }
             is Bekleyen.AlarmSaati -> {
                 val z = Turkce.parseTime(metin)
                 if (z != null) { bekleyen = null; alarmKur(z.first, z.second); return }
@@ -501,6 +532,65 @@ class Asistan(private val a: CezeriApp) {
     fun sohbeteGit() { _durum.update { it.copy(ekran = Ekran.Sohbet) } }
 
     private fun isleriYenile() { _durum.update { it.copy(isler = hafiza.isler()) } }
+
+    // ---------------------------------------------------------------- Gelen arama (Aşama 3)
+
+    private var aramada = false
+
+    fun aramaHaberAyarla(ac: Boolean) {
+        prefs.edit().putBoolean("arama_haber", ac).apply()
+        _durum.update { it.copy(aramaHaber = ac) }
+    }
+
+    fun gelenArama(numara: String?) {
+        if (!hafiza.kurulumBitti || aramada || !prefs.getBoolean("arama_haber", true)) return
+        aramada = true
+        val kisi = numara?.let { n -> if (rehber.izinVar()) rehberBul(n).firstOrNull() else null }
+        val kim = kisi?.ad ?: if (numara.isNullOrBlank()) "Bir numara" else "Kayıtlı olmayan bir numara"
+        ses.sus(); kulak.birak(); uyanma.durdur()
+        sohbetIsi?.cancel()
+        AramaKontrol.ziliKis(a)
+        _durum.update { it.copy(ekran = Ekran.GelenArama(kim, numara?.let { bicimliNumara(it) } ?: "")) }
+        bekleyen = Bekleyen.Arama(numara)
+        scope.launch {
+            delay(500)
+            if (bekleyen is Bekleyen.Arama) sorVeDinle("$kim arıyor. Açayım mı?")
+        }
+    }
+
+    fun aramaBitti() {
+        if (!aramada) return
+        aramada = false
+        AramaKontrol.ziliAc(a)
+        if (bekleyen is Bekleyen.Arama) { bekleyen = null; kulak.birak(); ses.sus() }
+        if (_durum.value.ekran is Ekran.GelenArama) anaEkrana()
+    }
+
+    fun aramaAc() {
+        val b = bekleyen as? Bekleyen.Arama
+        bekleyen = null; kulak.birak(); ses.sus()
+        if (!AramaKontrol.izinVar(a)) { AramaKontrol.ziliAc(a); soyle("Aramayı açabilmem için izin vermen gerekiyor. Ayarlardan verebilirsin."); return }
+        if (!AramaKontrol.ac(a)) { AramaKontrol.ziliAc(a); soyle("Açamadım, ekrandan açar mısın?") }
+        else b?.numara?.let { hafiza.isEkle("ara", "Gelen aramayı açtı", bicimliNumara(it)) }
+    }
+
+    fun aramaReddet() {
+        bekleyen = null; kulak.birak(); ses.sus()
+        AramaKontrol.ziliAc(a)
+        if (!AramaKontrol.izinVar(a) || !AramaKontrol.reddet(a)) { soyle("Reddedemedim, ekrandan kapatır mısın?"); return }
+        soyle("Reddettim.")
+    }
+
+    fun aramaMesgul() {
+        val numara = (bekleyen as? Bekleyen.Arama)?.numara
+        bekleyen = null; kulak.birak(); ses.sus()
+        AramaKontrol.ziliAc(a)
+        if (!AramaKontrol.izinVar(a) || !AramaKontrol.reddet(a)) { soyle("Reddedemedim, ekrandan kapatır mısın?"); return }
+        if (!numara.isNullOrBlank() && eylem.sms(numara, "Şu an müsait değilim, sonra ararım.")) {
+            hafiza.isEkle("mesaj", "Meşgul mesajı gönderdi", bicimliNumara(numara)); isleriYenile()
+            soyle("Reddettim ve müsait olmadığını yazdım.")
+        } else soyle("Reddettim.")
+    }
 
     // ---------------------------------------------------------------- Derin Düşün (E4B)
 

@@ -83,6 +83,10 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
     }
     val asistanMi = remember(yenile) { varsayilanAsistanMi(ctx) }
     val ustteGoster = remember(yenile) { Settings.canDrawOverlays(ctx) }
+    val aramaIzinleri = arrayOf(android.Manifest.permission.READ_PHONE_STATE, android.Manifest.permission.READ_CALL_LOG, android.Manifest.permission.ANSWER_PHONE_CALLS)
+    val aramaIzni = remember(yenile) { aramaIzinleri.all { ctx.checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED } }
+    val whatsappAcik = remember(yenile) { com.erkam.cezeri.asistan.WhatsappErisim.acikMi(ctx) }
+    val izinIste = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) { yenile++ }
     val pilSerbest = remember(yenile) { ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName) }
 
     Column(
@@ -153,6 +157,32 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
                 }
             }
 
+            Bolum("ARAMA VE MESAJ")
+            AyarKarti {
+                AyarSatiri(
+                    "Gelen aramayı sesli haber ver",
+                    if (!aramaIzni) "İzin gerekiyor · dokun" else if (d.aramaHaber) "“Baban arıyor, açayım mı?”" else "Kapalı",
+                    Ik.ZIL,
+                    tikla = if (!aramaIzni) ({ izinIste.launch(aramaIzinleri) }) else null,
+                ) { if (aramaIzni) Anahtar(d.aramaHaber) { vm.aramaHaberAyarla(it) } }
+                Text(
+                    "Sesle açıp reddetmen için “Hey Cezerî” de açık olmalı; kapalıyken yalnızca kimin aradığını söyler.",
+                    style = govde(12.sp, Renk.Soluk), modifier = Modifier.padding(start = 46.dp, top = 6.dp)
+                )
+                Ayrac()
+                AyarSatiri(
+                    "WhatsApp'ta otomatik gönder",
+                    if (whatsappAcik) "Açık · onayladığın mesajı ben gönderirim" else "Erişilebilirlikten Cezerî'yi aç",
+                    Ik.MESAJ,
+                    tamam = whatsappAcik,
+                    tikla = { ac(ctx, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                ) {}
+                if (!whatsappAcik) Text(
+                    "Erişilebilirlik › Yüklü uygulamalar › Cezerî. Gri görünürse: Ayarlar › Uygulamalar › Cezerî › sağ üstteki ⋮ › “Kısıtlı ayarlara izin ver”, sonra tekrar dene.",
+                    style = govde(12.sp, Renk.Soluk), modifier = Modifier.padding(start = 46.dp, top = 6.dp)
+                )
+            }
+
             Bolum("KISAYOLLAR")
             AyarKarti {
                 AyarSatiri(
@@ -213,7 +243,7 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
                 AyarSatiri("İzinler", "Mikrofon, rehber, telefon, SMS", Ik.AYAR, tikla = { vm.kurulumAdim(1) }) {}
             }
             Spacer(Modifier.height(8.dp))
-            Text("Cezerî · Aşama 2.1", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            Text("Cezerî · Aşama 3", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         }
     }
 }
