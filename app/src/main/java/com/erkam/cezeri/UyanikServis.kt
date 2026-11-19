@@ -70,8 +70,10 @@ class UyanikServis : Service() {
     private suspend fun izle() {
         var bosSure = 0L
         while (scope.isActive) {
+            // Ses kimliği kaydı sürerken mikrofon kayıt ekranında; dokunma
+            if (app.uyanma.duraklatildi) { bosSure = 0L; delay(300); continue }
             val d = app.asistan.durum.value
-            val mesgul = d.dinliyor || d.konusuyor || d.bekliyor || d.dusunuyor || app.uyanma.duraklatildi || aramada()
+            val mesgul = d.dinliyor || d.konusuyor || d.bekliyor || d.dusunuyor || aramada()
             if (mesgul) {
                 bosSure = 0L
                 if (app.uyanma.dinliyor.value) app.uyanma.durdur()
