@@ -552,7 +552,7 @@ class NoisyLatentResult {
 /**
  * Helper utility class
  */
-public class Helper {
+final class Helper {
     static void log(Object o) {}
     static void logf(String f, Object... a) {}
 
