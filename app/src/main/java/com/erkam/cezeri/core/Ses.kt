@@ -11,10 +11,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import com.erkam.cezeri.ses.CezeriSesi
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 
 /**
- * Cezerî'nin ağzı. Aşama 1'de telefonun Türkçe ses motorunu kullanır (erkek ses tercih edilir).
- * Aşama 1b'de bu sınıfın içi Cezerî'ye özel sesle (Supertonic) değişecek; dışarıdan kullanım aynı kalacak.
+ * Cezerî'nin ağzı. Önce Cezerî'nin kendi sesi (Supertonic 3, telefonda) kullanılır;
+ * o hazır değilse ya da hata verirse telefonun Türkçe sesi devreye girer.
  */
 class Ses(context: Context) : TextToSpeech.OnInitListener {
 
@@ -26,11 +31,47 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
     @Volatile private var hazir = false
     @Volatile private var sonId: String? = null
 
+    private val _androidKonusuyor = MutableStateFlow(false)
     private val _konusuyor = MutableStateFlow(false)
     val konusuyor: StateFlow<Boolean> = _konusuyor
 
-    var secilenSes: String? = null
-        private set
+    private val prefs = context.applicationContext.getSharedPreferences("ses", Context.MODE_PRIVATE)
+    val cezeri = CezeriSesi(context.applicationContext)
+    private val _motor = MutableStateFlow(prefs.getString("motor", MOTOR_CEZERI) ?: MOTOR_CEZERI)
+    /** "cezeri" ya da "telefon" */
+    val motor: StateFlow<String> = _motor
+    private val _stil = MutableStateFlow(prefs.getString("stil", "M1") ?: "M1")
+    val stil: StateFlow<String> = _stil
+
+    init {
+        CoroutineScope(Dispatchers.Main.immediate).launch {
+            combine(_androidKonusuyor, cezeri.konusuyor) { a, b -> a || b }.collect { _konusuyor.value = it }
+        }
+        if (cezeri.tamamMi()) cezeri.hazirla(_stil.value)
+    }
+
+    private fun cezeriyle(): Boolean = _motor.value == MOTOR_CEZERI && cezeri.kullanilabilir()
+
+    fun motorSec(m: String) {
+        _motor.value = m; prefs.edit().putString("motor", m).apply()
+        if (m == MOTOR_CEZERI && !cezeri.tamamMi()) cezeri.indir()
+    }
+
+    fun stilSec(s: String) {
+        _stil.value = s; prefs.edit().putString("stil", s).apply()
+        if (cezeri.tamamMi()) cezeri.hazirla(s)
+    }
+
+    fun sesIndir() = cezeri.indir()
+
+    fun dene(s: String) {
+        if (s != _stil.value) stilSec(s)
+        konus("Selâm, ben Cezerî. Emrine hazırım; ara, yaz, hatırlat, sor.")
+    }
+
+    private var telefonSesi: String? = null
+    val secilenSes: String?
+        get() = if (cezeriyle()) "Cezerî sesi · ${_stil.value}" else telefonSesi
 
     override fun onInit(status: Int) {
         if (status != TextToSpeech.SUCCESS) return
@@ -39,7 +80,7 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
         tts.setSpeechRate(0.96f)
         tts.setPitch(0.92f)
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) { _konusuyor.value = true }
+            override fun onStart(utteranceId: String?) { _androidKonusuyor.value = true }
             override fun onDone(utteranceId: String?) { bitti(utteranceId) }
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) { bitti(utteranceId) }
@@ -53,7 +94,7 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
 
     private fun bitti(id: String?) {
         if (id == null) return
-        if (id == sonId) _konusuyor.value = false
+        if (id == sonId) _androidKonusuyor.value = false
         bitince.remove(id)?.let { cb -> main.post { cb() } }
     }
 
@@ -69,7 +110,7 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
                     Regex("(-|_)m\\d|smtm|#male|trm|tr-tr-x-.*-(local|network)?.*m").containsMatchIn(n)
             }
             val secim = tr.filter { erkekMi(it) }.maxByOrNull { it.quality } ?: tr.maxByOrNull { it.quality }
-            secim?.let { tts.voice = it; secilenSes = it.name }
+            secim?.let { tts.voice = it; telefonSesi = it.name }
         } catch (_: Exception) {
         }
     }
@@ -78,6 +119,16 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
     fun konus(metin: String, temizle: Boolean = true, bitince: (() -> Unit)? = null) {
         val m = metin.trim()
         if (m.isEmpty()) { bitince?.let { main.post(it) }; return }
+        if (cezeriyle()) {
+            if (temizle && hazir) { this.bitince.clear(); tts.stop(); _androidKonusuyor.value = false }
+            cezeri.soyle(m, temizle, bitince) { yedekMetin, yedekBitince -> telefonla(yedekMetin, false, yedekBitince) }
+            return
+        }
+        if (temizle) cezeri.sus()
+        telefonla(m, temizle, bitince)
+    }
+
+    private fun telefonla(m: String, temizle: Boolean, bitince: (() -> Unit)?) {
         if (!hazir) {
             synchronized(bekleyen) { if (temizle) bekleyen.clear(); bekleyen.add(m to bitince) }
             return
@@ -85,7 +136,7 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
         val id = "cz-" + ids.incrementAndGet()
         if (bitince != null) this.bitince[id] = bitince
         sonId = id
-        _konusuyor.value = true
+        _androidKonusuyor.value = true
         tts.speak(m, if (temizle) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, Bundle(), id)
     }
 
@@ -96,8 +147,14 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
         bitince.clear()
         synchronized(bekleyen) { bekleyen.clear() }
         if (hazir) tts.stop()
-        _konusuyor.value = false
+        _androidKonusuyor.value = false
+        cezeri.sus()
     }
 
     fun kapat() { tts.shutdown() }
+
+    companion object {
+        const val MOTOR_CEZERI = "cezeri"
+        const val MOTOR_TELEFON = "telefon"
+    }
 }

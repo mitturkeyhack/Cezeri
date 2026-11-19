@@ -45,7 +45,7 @@ android {
 
     packaging {
         jniLibs { useLegacyPackaging = true }
-        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        resources { excludes += listOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/versions/9/module-info.class", "/META-INF/LICENSE*", "/META-INF/NOTICE*") }
     }
 }
 
@@ -69,4 +69,7 @@ dependencies {
     implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
     implementation("com.alphacephei:vosk-android:0.3.47@aar")
     implementation("net.java.dev.jna:jna:5.13.0@aar")
+    // Cezerî'nin kendi sesi (Supertonic 3)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
 }

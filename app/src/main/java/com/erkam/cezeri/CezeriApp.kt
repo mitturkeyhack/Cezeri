@@ -32,6 +32,8 @@ class CezeriApp : Application() {
         hafiza = Hafiza(this)
         model.devamEt()
         modelDerin.devamEt()
+        // Cezerî'nin kendi sesi: ana model hazırsa ve henüz inmediyse kendiliğinden indir (kaldığı yerden devam eder).
+        if (ses.motor.value == Ses.MOTOR_CEZERI && !ses.cezeri.tamamMi() && model.hazirMi()) ses.sesIndir()
         uyanma = Uyanma(this)
         asistan = Asistan(this)
     }

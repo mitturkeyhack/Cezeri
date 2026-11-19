@@ -155,6 +155,15 @@ class Asistan(private val a: CezeriApp) {
 
     fun sesAdi(): String? = ses.secilenSes
 
+    // Cezerî'nin sesi
+    val sesMotoru get() = ses.motor
+    val sesStili get() = ses.stil
+    val cezeriSesDurumu get() = ses.cezeri.durum
+    fun sesMotoruSec(m: String) = ses.motorSec(m)
+    fun sesDene(stil: String) { kulak.birak(); ses.dene(stil) }
+    fun cezeriSesiIndir() = ses.sesIndir()
+    fun cezeriSesiSil() { ses.cezeri.sil() }
+
     // ---------------------------------------------------------------- Dinleme
 
     fun mikrofon() {

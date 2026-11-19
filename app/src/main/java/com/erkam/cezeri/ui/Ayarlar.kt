@@ -58,6 +58,8 @@ import com.erkam.cezeri.Asistan
 import com.erkam.cezeri.Durum
 import com.erkam.cezeri.Ekran
 import com.erkam.cezeri.core.Akil
+import com.erkam.cezeri.core.Ses
+import com.erkam.cezeri.ses.CezeriSesi
 import com.erkam.cezeri.core.Uyanma
 
 private fun varsayilanAsistanMi(ctx: Context): Boolean = try {
@@ -226,6 +228,9 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
                 ) {}
             }
 
+            Bolum("SES")
+            SesBolumu(vm)
+
             Bolum("AKIL")
             AyarKarti {
                 AyarSatiri(
@@ -243,7 +248,7 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
                 AyarSatiri("İzinler", "Mikrofon, rehber, telefon, SMS", Ik.AYAR, tikla = { vm.kurulumAdim(1) }) {}
             }
             Spacer(Modifier.height(8.dp))
-            Text("Cezerî · Aşama 3", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            Text("Cezerî · Aşama 3 · Yeni ses", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         }
     }
 }
@@ -292,6 +297,62 @@ private fun UyanmaTesti(vm: Asistan) {
         }
         if (t.karar.isNotBlank()) Text("Sonuç: ${t.karar}", style = govde(13.sp, Renk.Altin, FontWeight.SemiBold))
         t.hata?.let { Text(it, style = govde(12.sp, Renk.Kirmizi)) }
+    }
+}
+
+@Composable
+private fun SesBolumu(vm: Asistan) {
+    val motor by vm.sesMotoru.collectAsState()
+    val stil by vm.sesStili.collectAsState()
+    val durum by vm.cezeriSesDurumu.collectAsState()
+    val cezeri = motor == Ses.MOTOR_CEZERI
+    AyarKarti {
+        AyarSatiri(
+            "Cezerî'nin kendi sesi",
+            when (val d = durum) {
+                is CezeriSesi.Durum.Yok -> "Bir kez indirilir · olgun, akıcı erkek sesi"
+                is CezeriSesi.Durum.Iniyor -> "İndiriliyor · ${d.inen / 1_000_000} / ${d.toplam / 1_000_000} MB"
+                CezeriSesi.Durum.Yukleniyor -> "Hazırlanıyor"
+                CezeriSesi.Durum.Hazir -> if (cezeri) "Kullanılıyor · telefonda üretilir" else "Hazır"
+                is CezeriSesi.Durum.Hata -> d.mesaj
+            },
+            Ik.HOPARLOR,
+            tamam = cezeri && durum is CezeriSesi.Durum.Hazir,
+        ) { Anahtar(cezeri) { vm.sesMotoruSec(if (it) Ses.MOTOR_CEZERI else Ses.MOTOR_TELEFON) } }
+        val d = durum
+        if (d is CezeriSesi.Durum.Iniyor) {
+            Spacer(Modifier.height(10.dp))
+            val oran = if (d.toplam > 0) (d.inen.toFloat() / d.toplam).coerceIn(0f, 1f) else 0f
+            Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Renk.KartCizgi)) {
+                Box(Modifier.fillMaxWidth(oran).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Renk.Altin))
+            }
+        }
+        if (d is CezeriSesi.Durum.Yok || d is CezeriSesi.Durum.Hata) {
+            Spacer(Modifier.height(12.dp))
+            AltinDugme("Sesi indir", Modifier.fillMaxWidth(), Ik.HOPARLOR) { vm.cezeriSesiIndir() }
+        }
+        if (cezeri && (d is CezeriSesi.Durum.Hazir || d is CezeriSesi.Durum.Yukleniyor)) {
+            Ayrac()
+            Text("SES TONU", style = etiket(Renk.TurkuazAcik))
+            Spacer(Modifier.height(4.dp))
+            Text("Birine dokun, dinle; beğendiğin kalır.", style = govde(12.sp, Renk.Soluk))
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                CezeriSesi.STILLER.forEachIndexed { i, s ->
+                    val secili = s == stil
+                    Box(
+                        Modifier.weight(1f).height(46.dp).clip(RoundedCornerShape(14.dp))
+                            .background(if (secili) Renk.AltinZemin else Renk.KartKoyu)
+                            .border(1.dp, if (secili) Renk.Altin else Renk.Cizgi, RoundedCornerShape(14.dp))
+                            .clickable(role = Role.Button) { vm.sesDene(s) }
+                            .semantics { contentDescription = "Ses ${i + 1}" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("${i + 1}", style = govde(16.sp, if (secili) Renk.Altin else Renk.SolukAcik, FontWeight.SemiBold))
+                    }
+                }
+            }
+        }
     }
 }
 
