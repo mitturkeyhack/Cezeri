@@ -35,12 +35,14 @@ jobs:
         run: gradle :app:testReleaseUnitTest --continue
 
       - name: Sınav sonucu
-        if: failure()
+        if: always()
         run: |
           for f in app/build/test-results/testReleaseUnitTest/*.xml; do
             python3 - "$f" << 'PY'
           import sys, xml.etree.ElementTree as ET
-          for tc in ET.parse(sys.argv[1]).getroot().iter('testcase'):
+          r = ET.parse(sys.argv[1]).getroot()
+          print("SINAV-OZET", r.get('name'), "test:", r.get('tests'), "hata:", r.get('failures'))
+          for tc in r.iter('testcase'):
               for fl in tc.findall('failure'):
                   print("SINAV-HATA", tc.get('name'), "::", (fl.get('message') or '')[:300])
           PY
