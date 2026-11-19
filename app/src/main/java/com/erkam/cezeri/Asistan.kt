@@ -467,6 +467,10 @@ class Asistan(private val a: CezeriApp) {
 
     fun uyanmaModeliIndir() = uyanma.indir()
 
+    val uyanmaTeshis get() = uyanma.teshis
+    fun uyanmaServisiCalisiyor(): Boolean = uyanma.servisCalisiyor
+    fun uyanmaDinliyor(): Boolean = uyanma.dinliyor.value
+
     fun sesKaydiBaslat() {
         if (!uyanma.modellerVar()) {
             uyanma.indir()

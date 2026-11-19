@@ -63,6 +63,7 @@ class UyanikServis : Service() {
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "cezeri:uyanik")
                 .apply { setReferenceCounted(false); acquire() }
         }
+        app.uyanma.servisCalisiyor = true
         if (dongu == null) dongu = scope.launch { izle() }
         return START_STICKY
     }
@@ -141,6 +142,7 @@ class UyanikServis : Service() {
     }
 
     override fun onDestroy() {
+        app.uyanma.servisCalisiyor = false
         app.uyanma.durdur()
         scope.cancel()
         try { kilit?.release() } catch (_: Exception) {}

@@ -32,7 +32,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,6 +51,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
+import kotlinx.coroutines.delay
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.erkam.cezeri.Asistan
@@ -126,6 +130,10 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
                 }
                 Spacer(Modifier.height(6.dp))
                 Text("Yanlışlıkla uyanıyorsa “Katı”, seni duymuyorsa “Rahat” seç.", style = govde(12.sp, Renk.Soluk))
+                if (d.uyanmaAcik) {
+                    Ayrac()
+                    UyanmaTesti(vm)
+                }
             }
 
             Bolum("SES KİMLİĞİ")
@@ -205,8 +213,55 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
                 AyarSatiri("İzinler", "Mikrofon, rehber, telefon, SMS", Ik.AYAR, tikla = { vm.kurulumAdim(1) }) {}
             }
             Spacer(Modifier.height(8.dp))
-            Text("Cezerî · Aşama 2", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            Text("Cezerî · Aşama 2.1", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         }
+    }
+}
+
+@Composable
+private fun UyanmaTesti(vm: Asistan) {
+    val t by vm.uyanmaTeshis.collectAsState()
+    var servis by remember { mutableStateOf(false) }
+    var dinliyor by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            servis = vm.uyanmaServisiCalisiyor(); dinliyor = vm.uyanmaDinliyor()
+            delay(700)
+        }
+    }
+    fun yuzde(x: Double) = "%" + (x * 100).toInt().coerceIn(0, 100)
+    Text("UYANMA TESTİ", style = etiket(Renk.TurkuazAcik))
+    Spacer(Modifier.height(6.dp))
+    Text("“Hey Cezerî” de ve burada ne duyduğuma bak.", style = govde(12.sp, Renk.Soluk))
+    Spacer(Modifier.height(10.dp))
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Renk.KartKoyu)
+            .border(1.dp, Renk.Cizgi, RoundedCornerShape(14.dp)).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(if (dinliyor) Renk.Turkuaz else if (servis) Renk.Altin else Renk.Kirmizi))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                when {
+                    dinliyor -> "Dinliyor"
+                    servis -> "Beklemede (meşgul ya da hazırlanıyor)"
+                    else -> "Arka plan servisi çalışmıyor"
+                },
+                style = govde(13.sp, Renk.Yazi, FontWeight.Medium)
+            )
+        }
+        Text("Duyduğum: " + if (t.duyulan.isBlank()) "—" else "“${t.duyulan}”", style = govde(13.sp, Renk.SolukAcik))
+        if (t.kelimeEsigi > 0) {
+            Text("Kelime benzerliği: ${yuzde(t.kelimePuani)} (gereken ${yuzde(t.kelimeEsigi)})", style = govde(13.sp, if (t.kelimePuani >= t.kelimeEsigi) Renk.TurkuazAcik else Renk.SolukAcik))
+            Text(
+                if (t.sesPuani == null) "Ses kimliği: kayıtlı değil (herkese uyanır)"
+                else "Ses benzerliği: ${yuzde(t.sesPuani!!)} (gereken ${yuzde(t.sesEsigi ?: 0.0)})",
+                style = govde(13.sp, if (t.sesPuani == null || t.sesPuani!! >= (t.sesEsigi ?: 0.0)) Renk.TurkuazAcik else Renk.SolukAcik)
+            )
+        }
+        if (t.karar.isNotBlank()) Text("Sonuç: ${t.karar}", style = govde(13.sp, Renk.Altin, FontWeight.SemiBold))
+        t.hata?.let { Text(it, style = govde(12.sp, Renk.Kirmizi)) }
     }
 }
 

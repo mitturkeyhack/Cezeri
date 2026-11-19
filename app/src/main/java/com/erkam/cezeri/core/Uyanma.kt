@@ -57,6 +57,21 @@ class Uyanma(private val ctx: Context) {
     private val _dinliyor = MutableStateFlow(false)
     val dinliyor: StateFlow<Boolean> = _dinliyor
 
+    /** Ayarlar'daki canlı uyanma testi için: ne duydu, puanlar, karar */
+    data class Teshis(
+        val duyulan: String = "",
+        val kelimePuani: Double = 0.0,
+        val kelimeEsigi: Double = 0.0,
+        val sesPuani: Double? = null,
+        val sesEsigi: Double? = null,
+        val karar: String = "",
+        val hata: String? = null,
+        val zaman: Long = 0L,
+    )
+    private val _teshis = MutableStateFlow(Teshis())
+    val teshis: StateFlow<Teshis> = _teshis
+    @Volatile var servisCalisiyor: Boolean = false
+
     init {
         try { LibVosk.setLogLevel(LogLevel.WARNINGS) } catch (_: Throwable) {}
     }
@@ -144,7 +159,9 @@ class Uyanma(private val ctx: Context) {
                 if (spk == null) spk = SpeakerModel(spkDir.absolutePath)
                 true
             } catch (e: Throwable) {
-                Log.e("Cezeri", "Vosk yüklenemedi", e); false
+                Log.e("Cezeri", "Vosk yüklenemedi", e)
+                _teshis.value = _teshis.value.copy(hata = "Uyanma modeli açılamadı: ${e.javaClass.simpleName} ${e.message ?: ""}".trim(), zaman = System.currentTimeMillis())
+                false
             }
         }
     }
@@ -183,10 +200,10 @@ class Uyanma(private val ctx: Context) {
         for (v in vektorler) for (i in 0 until n) merkez[i] += v[i] / vektorler.size
         val benzerlikler = vektorler.map { kosinus(it, merkez) }
         // Kayıtlardaki en düşük benzerliğin biraz altı eşik olur
-        val esik = (benzerlikler.minOrNull() ?: 0.5) - 0.12
+        val esik = (benzerlikler.minOrNull() ?: 0.5) - 0.18
         prefs.edit()
             .putString("merkez", merkez.joinToString(","))
-            .putFloat("esik", esik.toFloat().coerceIn(0.15f, 0.85f))
+            .putFloat("esik", esik.toFloat().coerceIn(0.10f, 0.80f))
             .putInt("ornek", vektorler.size)
             .apply()
     }
@@ -194,12 +211,17 @@ class Uyanma(private val ctx: Context) {
     private fun merkez(): DoubleArray? = prefs.getString("merkez", null)?.split(',')?.map { it.toDouble() }?.toDoubleArray()
 
     /** Konuşan kişi sahibi mi? Kayıt yoksa herkes kabul. */
+    fun sesEsigi(): Double = (prefs.getFloat("esik", 0.40f) + (hassasiyet - 0.5f) * 0.3f).toDouble()
+
+    fun sesPuani(v: DoubleArray?): Double? {
+        val m = merkez() ?: return null
+        if (v == null) return 0.0
+        return kosinus(v, m)
+    }
+
     fun sahibiMi(v: DoubleArray?): Boolean {
-        val m = merkez() ?: return true
-        if (v == null) return false
-        // hassasiyet 0.5 = kayıttaki eşik; 1.0 = daha katı, 0.0 = daha gevşek
-        val esik = prefs.getFloat("esik", 0.45f) + (hassasiyet - 0.5f) * 0.2f
-        return kosinus(v, m) >= esik
+        val p = sesPuani(v) ?: return true
+        return p >= sesEsigi()
     }
 
     private fun kosinus(a: DoubleArray, b: DoubleArray): Double {
@@ -238,10 +260,15 @@ class Uyanma(private val ctx: Context) {
             var bitti = false
             sv.startListening(object : RecognitionListener {
                 override fun onPartialResult(hypothesis: String?) {
-                    // Ses kimliği kaydı yoksa kısmi sonuçta hemen uyan (daha hızlı)
-                    if (kayit != null || bitti || kayitliMi()) return
+                    if (kayit != null || bitti) return
                     val metin = metinAl(hypothesis, "partial")
-                    if (uyanmaKelimesiVar(metin)) { bitti = true; durdur(); uyan?.invoke() }
+                    if (metin.isBlank()) return
+                    _teshis.value = _teshis.value.copy(duyulan = metin, hata = null, zaman = System.currentTimeMillis())
+                    // Ses kimliği kaydı yoksa kısmi sonuçta hemen uyan (daha hızlı)
+                    if (!kayitliMi() && uyanmaKelimesiVar(metin)) {
+                        _teshis.value = _teshis.value.copy(kelimePuani = kelimePuani(metin), kelimeEsigi = kelimeEsigi(), karar = "Uyandı")
+                        bitti = true; durdur(); uyan?.invoke()
+                    }
                 }
 
                 override fun onResult(hypothesis: String?) {
@@ -252,7 +279,23 @@ class Uyanma(private val ctx: Context) {
                         if (metin.isBlank() && v == null) return
                         bitti = true; durdur(); kayit(v, metin); return
                     }
-                    if (uyanmaKelimesiVar(metin) && sahibiMi(v)) { bitti = true; durdur(); uyan?.invoke() }
+                    if (metin.isBlank()) return
+                    val kp = kelimePuani(metin)
+                    val ke = kelimeEsigi()
+                    val sp = sesPuani(v)
+                    val se = if (sp == null) null else sesEsigi()
+                    val kelimeTamam = uyanmaKelimesiVar(metin)
+                    val sesTamam = sahibiMi(v)
+                    _teshis.value = Teshis(
+                        duyulan = metin, kelimePuani = kp, kelimeEsigi = ke, sesPuani = sp, sesEsigi = se,
+                        karar = when {
+                            kelimeTamam && sesTamam -> "Uyandı"
+                            !kelimeTamam -> "Kelime “Cezerî”ye benzemedi"
+                            else -> "Ses kimliği tutmadı"
+                        },
+                        zaman = System.currentTimeMillis(),
+                    )
+                    if (kelimeTamam && sesTamam) { bitti = true; durdur(); uyan?.invoke() }
                 }
 
                 override fun onFinalResult(hypothesis: String?) {}
@@ -262,6 +305,7 @@ class Uyanma(private val ctx: Context) {
             _dinliyor.value = true
         } catch (e: Exception) {
             Log.e("Cezeri", "Uyanma dinlemesi başlatılamadı", e)
+            _teshis.value = _teshis.value.copy(hata = "Mikrofon açılamadı: ${e.message ?: e.javaClass.simpleName}", zaman = System.currentTimeMillis())
             durdur()
             kayit?.invoke(null, "")
         }
@@ -288,22 +332,30 @@ class Uyanma(private val ctx: Context) {
     } catch (_: Exception) { null }
 
     /** Küçük Türkçe model "Cezerî"yi bilmediği için ona en yakın duyulan kelimeleri esnek eşleştiririz. */
-    fun uyanmaKelimesiVar(metin: String): Boolean {
+    fun kelimeEsigi(): Double = 0.66 + (hassasiyet - 0.5) * 0.16
+
+    /** Duyulan cümlede "Cezerî"ye en çok benzeyen kelimenin (ya da iki kelimenin birleşiminin) puanı */
+    fun kelimePuani(metin: String): Double {
         val t = Turkce.norm(metin)
-        if (t.isBlank()) return false
+        if (t.isBlank()) return 0.0
         val k = t.split(' ').filter { it.isNotBlank() }
-        if (k.size > 7) return false
-        val esik = 0.72 + (hassasiyet - 0.5) * 0.1
         val adaylar = ArrayList<String>()
         for (i in k.indices) {
             adaylar.add(k[i])
             if (i + 1 < k.size) adaylar.add(k[i] + k[i + 1])
+            if (i + 2 < k.size) adaylar.add(k[i] + k[i + 1] + k[i + 2])
         }
-        return adaylar.any { w -> HEDEFLER.any { h -> Turkce.similarity(w, h) >= esik } }
+        return adaylar.maxOfOrNull { w -> HEDEFLER.maxOf { h -> Turkce.similarity(w, h) } } ?: 0.0
+    }
+
+    fun uyanmaKelimesiVar(metin: String): Boolean {
+        val k = Turkce.norm(metin).split(' ').filter { it.isNotBlank() }
+        if (k.isEmpty() || k.size > 8) return false
+        return kelimePuani(metin) >= kelimeEsigi()
     }
 
     companion object {
-        private val HEDEFLER = listOf("cezeri", "cezerim", "gezeri", "cezayiri", "cezari", "ceziri")
+        private val HEDEFLER = listOf("cezeri", "cezerim", "gezeri", "cezari", "ceziri", "cezire", "cezere", "heycezeri", "eycezeri", "hecezeri")
         val TR_URLS = listOf(
             "https://alphacephei.com/vosk/models/vosk-model-small-tr-0.3.zip",
             "https://huggingface.co/rhasspy/vosk-models/resolve/main/tr/vosk-model-small-tr-0.3.zip",
