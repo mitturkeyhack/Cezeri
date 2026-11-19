@@ -23,10 +23,18 @@ object Turkce {
     }
 
     /** Kesme işaretlerini tekleştirir, baştaki "hey cezerî" gibi hitapları ve sondaki noktalamayı atar. */
+    private val hitap = Regex("^(?:(?:hey|hay|ey|hi|alo|selam)\\s*,?\\s*)?(?:cezer[iîı]m?|cezir[ei]|ceziri|gezer[iı]|cezar[iı]|cezere|ceziret|cezeri)(?![\\p{L}])\\s*[,!.]?\\s*")
+    private val bitisikSoru = Regex("(?<![\\p{L}])(var|yok|kay[ıi]tl[ıi]|ekli|olur|arar|yazar|atar|g[öo]nderir|kurar|a[çc]ar|s[öo]yler|biliyor|bilir|yapar|okur|haz[ıi]r|orada|duyuyor)(m[ıiuü])(s[ıiuü]n|y[ıi]m|s[ıiuü]n[ıu]z)?(?![\\p{L}])")
+
     fun clean(s: String): String {
-        var t = lower(s).replace('’', '\'').replace('`', '\'').trim()
-        t = t.replace(Regex("^(hey\\s+)?cezer[iî]\\s*[,!]?\\s*"), "")
-        t = t.trimEnd('.', '!', '?', ',', ' ')
+        var t = lower(s).replace('’', '\'').replace('`', '\'').replace('‘', '\'').trim()
+        t = t.replace(hitap, "")
+        // "varmı" -> "var mı", "ararmısın" -> "arar mısın"
+        t = t.replace(bitisikSoru) { m -> m.groupValues[1] + " " + m.groupValues[2] + m.groupValues[3] }
+        // Nezaket ve dolgu sözleri
+        t = t.replace(Regex("(?<![\\p{L}])(l[üu]tfen|bir zahmet|acaba|rica etsem|yav|ya bi|hadi)(?![\\p{L}])"), " ")
+        t = t.replace(Regex("\\s+"), " ")
+        t = t.trim().trimEnd('.', '!', '?', ',', ' ').trimStart(',', ' ')
         return t.trim()
     }
 

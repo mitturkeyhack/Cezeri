@@ -7,6 +7,9 @@ import com.erkam.cezeri.asistan.WhatsappGonderim
 import com.erkam.cezeri.core.Akil
 import com.erkam.cezeri.core.Kanal
 import com.erkam.cezeri.core.Kisi
+import com.erkam.cezeri.core.KisiEsle
+import com.erkam.cezeri.core.Namaz
+import com.erkam.cezeri.core.Not
 import com.erkam.cezeri.core.Komut
 import com.erkam.cezeri.core.KomutCozucu
 import com.erkam.cezeri.core.Kulak
@@ -35,6 +38,7 @@ sealed interface Ekran {
     data object Ayarlar : Ekran
     data class GelenArama(val kim: String, val numara: String) : Ekran
     data class SesKaydi(val adim: Int, val toplam: Int, val mesaj: String, val bitti: Boolean = false) : Ekran
+    data class Kible(val derece: Double, val yon: String) : Ekran
 }
 
 data class SohbetMesaji(val benden: Boolean, val metin: String, val bitti: Boolean = true)
@@ -59,6 +63,8 @@ data class Durum(
     val aramaHaber: Boolean = true,
     val derinModel: ModelIndirici.Durum = ModelIndirici.Durum.Yok,
     val uyanmaHassasiyet: Float = 0.5f,
+    val notlar: List<Not> = emptyList(),
+    val konum: Pair<Double, Double>? = null,
 )
 
 class Asistan(private val a: CezeriApp) {
@@ -81,7 +87,7 @@ class Asistan(private val a: CezeriApp) {
     val durum: StateFlow<Durum> = _durum
 
     private sealed interface Bekleyen {
-        data class Onay(val evet: () -> Unit, val hayir: () -> Unit, val degistir: (() -> Unit)?, val deneme: Int = 0) : Bekleyen
+        data class Onay(val evet: () -> Unit, val hayir: () -> Unit, val degistir: (() -> Unit)?, val deneme: Int = 0, val yumusak: Boolean = false) : Bekleyen
         data class Secim(val secenekler: List<Kisi>, val sec: (Kisi) -> Unit, val deneme: Int = 0) : Bekleyen
         data class Govde(val kisi: Kisi, val kanal: Kanal?) : Bekleyen
         data class AlarmSaati(val deneme: Int = 0) : Bekleyen
@@ -97,8 +103,19 @@ class Asistan(private val a: CezeriApp) {
         set(v) { field = v; _durum.update { it.copy(bekliyor = v != null) } }
     private var sohbetIsi: Job? = null
 
+    /** Kullanıcı sesle mi konuştu? Yazınca Cezerî sessiz cevap verir; kilit ekranında hep sesli. */
+    private var sesli = false
+    private var buTurYazili = false
+    /** "onu ara", "ona yaz": son konuşulan kişi */
+    private var sonKisi: Kisi? = null
+    @Volatile private var modelEylemi = false
+    private val anaIs = android.os.Handler(android.os.Looper.getMainLooper())
+
     init {
-        akil.araclar = com.erkam.cezeri.core.CezeriAraclari { rehberBul(it) }
+        akil.araclar = com.erkam.cezeri.core.CezeriAraclari({ rehberBul(it) }) { tur, x, y -> modelEylem(tur, x, y) }
+        akil.notlar = { hafiza.notlar().map { it.metin } }
+        _durum.update { it.copy(notlar = hafiza.notlar()) }
+        scope.launch { a.konum.konum.collect { v -> _durum.update { it.copy(konum = v) } } }
         _durum.update { it.copy(derinMod = derinIstek, aramaHaber = prefs.getBoolean("arama_haber", true)) }
         if (derinIstek && a.modelDerin.hazirMi()) scope.launch { akil.yukle(a.modelDerin.dosya) }
         scope.launch { kulak.dinliyor.collect { v -> _durum.update { it.copy(dinliyor = v) } } }
@@ -168,15 +185,23 @@ class Asistan(private val a: CezeriApp) {
 
     fun mikrofon() {
         if (_durum.value.dinliyor) { kulak.durdur(); return }
+        sesli = true
         ses.sus()
         dinle()
     }
 
-    /** Yan tuş / asistan kısayoluyla açılınca */
+    /** Yan tuş / asistan kısayolu / "Hey Cezerî" ile açılınca */
     fun cagrildi() {
         if (_durum.value.ekran is Ekran.Kurulum) return
+        sesli = true
         ses.konus("Buyur.") { dinle() }
     }
+
+    private fun kilitli(): Boolean = try {
+        a.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked
+    } catch (_: Exception) { false }
+
+    private fun sesliMi(): Boolean = sesli || kilitli()
 
     fun dinle() {
         // Arka plandaki "Hey Cezerî" dinlemesi mikrofonu tutuyorsa önce bırakılır
@@ -191,14 +216,45 @@ class Asistan(private val a: CezeriApp) {
     }
 
     private fun sorVeDinle(metin: String) {
-        ses.konus(metin) { dinle() }
+        if (sesliMi()) ses.konus(metin) { dinle() } else yaziyaEkle(metin)
     }
 
-    private fun soyle(metin: String, sonra: (() -> Unit)? = null) = ses.konus(metin, bitince = sonra)
+    private fun soyle(metin: String, sonra: (() -> Unit)? = null) {
+        if (sesliMi()) ses.konus(metin, bitince = sonra)
+        else { yaziyaEkle(metin); sonra?.invoke() }
+    }
+
+    /** Sessiz modda cevaplar sohbete yazılır. */
+    private fun yaziyaEkle(metin: String) {
+        _durum.update {
+            val ekran = if (it.ekran is Ekran.Ana) Ekran.Sohbet else it.ekran
+            it.copy(ekran = ekran, sohbet = it.sohbet + SohbetMesaji(false, metin))
+        }
+    }
+
+    private fun kullaniciSatiri(metin: String) {
+        if (buTurYazili) return
+        buTurYazili = true
+        _durum.update { it.copy(sohbet = it.sohbet + SohbetMesaji(true, metin)) }
+    }
+
+    /** Bilgi cevabı: sohbette gösterilir, sesli moddaysa okunur. */
+    private fun cevapGoster(soru: String, cevap: String, sonra: (() -> Unit)? = null) {
+        kullaniciSatiri(soru)
+        _durum.update { it.copy(ekran = Ekran.Sohbet, sohbet = it.sohbet + SohbetMesaji(false, cevap)) }
+        if (sesliMi()) ses.konus(cevap, bitince = sonra) else sonra?.invoke()
+    }
+
+    /** İş bitince dönülecek ekran: sesle çalışırken ana ekran, yazarken sohbet. */
+    private fun donus() {
+        if (sesli || _durum.value.sohbet.isEmpty()) anaEkrana()
+        else _durum.update { it.copy(ekran = Ekran.Sohbet, isler = hafiza.isler()) }
+    }
 
     private fun duydu(s: Kulak.Sonuc) {
         when (s) {
             is Kulak.Sonuc.Metin -> {
+                buTurYazili = false
                 _durum.update { it.copy(duyulan = s.en) }
                 val b = bekleyen
                 if (b != null) cevapla(b, s.en, s.alternatifler) else isle(s.en, s.alternatifler)
@@ -226,6 +282,13 @@ class Asistan(private val a: CezeriApp) {
     fun yazdi(metin: String) {
         if (metin.isBlank()) return
         ses.sus(); kulak.birak()
+        sesli = false
+        buTurYazili = false
+        val ekran = _durum.value.ekran
+        if (ekran is Ekran.Ana || ekran is Ekran.Sohbet) {
+            kullaniciSatiri(metin)
+            _durum.update { it.copy(ekran = Ekran.Sohbet) }
+        } else kullaniciSatiri(metin)
         val b = bekleyen
         if (b != null) cevapla(b, metin, listOf(metin)) else isle(metin, listOf(metin))
     }
@@ -242,7 +305,33 @@ class Asistan(private val a: CezeriApp) {
             }
         }
         when (val k = komut) {
-            is Komut.Ara -> if (k.numara != null) aramaOnayla(numaraKisi(k.numara)) else kisiBul(k.isimVaryantlari, k.soylenen, mesajMi = false) { aramaOnayla(it) }
+            is Komut.Ara -> if (k.numara != null) aramaOnayla(numaraKisi(k.numara)) else kisiBul(k.isimVaryantlari, k.soylenen, mesajMi = false, tam = k.tam) { aramaOnayla(it) }
+            Komut.Cagri -> sorVeDinle("Buyur, dinliyorum.")
+            is Komut.Vakit -> vakitCevapla(k, metin)
+            Komut.Kible -> kibleGoster(metin)
+            is Komut.Hatirla -> {
+                hafiza.notEkle(k.bilgi); notlariYenile()
+                cevapGoster(metin, "Tamam, aklımda tutuyorum: ${k.bilgi}")
+            }
+            Komut.HafizaListe -> {
+                val n = hafiza.notlar()
+                cevapGoster(metin,
+                    if (n.isEmpty()) "Henüz bana hatırlamam için bir şey söylemedin. “Şunu hatırla” diye başlaman yeterli."
+                    else "Aklımda ${n.size} şey var. " + n.takeLast(5).reversed().joinToString(" ") { it.metin.trimEnd('.') + "." } + if (n.size > 5) " Gerisi Ayarlar'da." else ""
+                )
+            }
+            is Komut.Unut -> {
+                val t = Turkce.norm(k.sorgu)
+                if (Regex("^(hepsini|her seyi|tumunu|butun notlari|hersey)$").matches(t)) {
+                    val sayi = hafiza.notlar().size
+                    hafiza.notlariTemizle(); notlariYenile()
+                    cevapGoster(metin, if (sayi == 0) "Zaten aklımda bir şey yoktu." else "Tamam, $sayi bilginin hepsini unuttum.")
+                } else {
+                    val n = hafiza.notBul(k.sorgu)
+                    if (n == null) cevapGoster(metin, "Bununla ilgili aklımda bir şey yok.")
+                    else { hafiza.notSil(n.id); notlariYenile(); cevapGoster(metin, "Unuttum: ${n.metin}") }
+                }
+            }
             is Komut.Mesaj -> mesajKomutu(k)
             is Komut.Fener -> {
                 val ok = eylem.fener(k.ac)
@@ -263,11 +352,7 @@ class Asistan(private val a: CezeriApp) {
             is Komut.Hesap -> {
                 val v = com.erkam.cezeri.core.Hesap.hesapla(k.ifade)
                 if (v == null) sohbet(metin)
-                else {
-                    val c = "Sonuç ${com.erkam.cezeri.core.Hesap.bicimle(v)}."
-                    _durum.update { it.copy(ekran = Ekran.Sohbet, sohbet = it.sohbet + SohbetMesaji(true, metin) + SohbetMesaji(false, c)) }
-                    soyle(c)
-                }
+                else cevapGoster(metin, "Sonuç ${com.erkam.cezeri.core.Hesap.bicimle(v)}.")
             }
             is Komut.RehberSor -> rehberCevapla(k, metin)
             is Komut.Sohbet -> sohbet(k.metin)
@@ -287,24 +372,60 @@ class Asistan(private val a: CezeriApp) {
             val son = rakam.takeLast(10)
             rehber.hepsi().filter { it.numara.filter { c -> c.isDigit() }.takeLast(10) == son }
         } else {
-            rehber.bul(KomutCozucu.isimVaryant(sorgu, Turkce.Ek.BELIRTME)).groupBy { it.kisi.contactId }.map { it.value.first().kisi }
+            rehber.kisiler(KomutCozucu.isimVaryant(sorgu, Turkce.Ek.BELIRTME)).map { it.kisi }
         }
     }
 
     private fun rehberCevapla(k: Komut.RehberSor, metin: String) {
-        if (!rehber.izinVar()) { soyle("Rehberine erişemiyorum. Kurulumdan rehber iznini vermen gerekiyor."); return }
-        val bulunan = rehberBul(k.sorgu)
+        if (!rehber.izinVar()) { cevapGoster(metin, "Rehberine erişemiyorum. Kurulumdan rehber iznini vermen gerekiyor."); return }
         val rakamMi = k.sorgu.count { it.isDigit() } >= 7
-        val cevap = when {
-            bulunan.isEmpty() -> if (rakamMi) "Bu numara rehberinde kayıtlı değil." else "Rehberinde bu isimde birini bulamadım."
-            rakamMi -> "Evet, bu numara rehberinde ${bulunan.first().ad} olarak kayıtlı."
-            k.numaraIste && bulunan.size == 1 -> "${bulunan[0].ad}: ${bicimliNumara(bulunan[0].numara)}."
-            k.numaraIste -> bulunan.take(3).joinToString(". ") { "${it.ad}: ${bicimliNumara(it.numara)}" } + "."
-            bulunan.size == 1 -> "Evet, rehberinde ${bulunan[0].ad} var."
-            else -> "Evet, rehberinde ${bulunan.size} kişi var: " + bulunan.take(4).joinToString(", ") { it.ad } + "."
+        if (rakamMi) {
+            val l = rehberBul(k.sorgu)
+            if (l.isEmpty()) cevapGoster(metin, "Bu numara rehberinde kayıtlı değil.")
+            else { sonKisi = l.first(); cevapGoster(metin, "Bu numara rehberinde ${l.first().ad} olarak kayıtlı.") }
+            return
         }
-        _durum.update { it.copy(ekran = Ekran.Sohbet, sohbet = it.sohbet + SohbetMesaji(true, metin) + SohbetMesaji(false, cevap)) }
-        soyle(cevap)
+        val es = rehber.kisiler(KomutCozucu.isimVaryant(k.sorgu, Turkce.Ek.BELIRTME))
+        val birebir = es.filter { it.puan >= KisiEsle.BIREBIR }
+        val guclu = es.filter { it.puan >= KisiEsle.GUCLU }
+        val ad = k.sorgu.trim().replaceFirstChar { it.titlecase(Turkce.TR) }
+        fun liste(l: List<com.erkam.cezeri.core.Eslesme>) = l.take(3).joinToString(", ") { it.kisi.ad }
+        when {
+            es.isEmpty() -> cevapGoster(metin, "Rehberinde “$ad” diye biri yok.")
+            birebir.size == 1 || (birebir.isEmpty() && guclu.size == 1) -> {
+                val kisi = (birebir.firstOrNull() ?: guclu.first()).kisi
+                sonKisi = kisi
+                val bas = when {
+                    k.numaraIste -> "${kisi.ad}: ${bicimliNumara(kisi.numara)}."
+                    birebir.isNotEmpty() -> "Evet, ${kisi.ad} rehberinde kayıtlı."
+                    else -> "Tam “$ad” diye biri yok ama ${kisi.ad} var."
+                }
+                val diger = es.size - 1
+                val ek = if (diger > 0 && !k.numaraIste) " Benzer isimde $diger kişi daha var." else ""
+                yumusakSor(metin, "$bas$ek Arayayım mı?", kisi)
+            }
+            birebir.size > 1 -> {
+                val c = "Rehberinde ${birebir.size} tane ${birebir.first().kisi.ad} var: ${liste(birebir)}" +
+                    (if (k.numaraIste) ". " + birebir.take(3).joinToString(". ") { "${it.kisi.ad}: ${bicimliNumara(it.kisi.numara)}" } else "") + "."
+                cevapGoster(metin, c)
+            }
+            else -> {
+                val l = if (guclu.isNotEmpty()) guclu else es
+                val c = "“$ad” diye birebir kayıtlı biri yok. Benzer ${l.size} kişi var" + (if (l.size > 3) ", ilk üçü: " else ": ") + liste(l) + "."
+                cevapGoster(metin, c)
+            }
+        }
+    }
+
+    /** Bilgi verdikten sonra "Arayayım mı?" gibi yumuşak bir soru: cevap evet/hayır değilse yeni komut sayılır. */
+    private fun yumusakSor(soru: String, cevap: String, kisi: Kisi) {
+        bekleyen = Bekleyen.Onay(
+            evet = { aramaOnayla(kisi) },
+            hayir = { soyle("Peki.") },
+            degistir = null,
+            yumusak = true,
+        )
+        cevapGoster(soru, cevap) { if (sesliMi() && bekleyen is Bekleyen.Onay) dinle() }
     }
 
     private fun numaraKisi(numara: String): Kisi {
@@ -343,26 +464,30 @@ class Asistan(private val a: CezeriApp) {
         }
     }
 
-    private fun kisiBul(varyantlar: List<String>, soylenen: String, mesajMi: Boolean, devam: (Kisi) -> Unit) {
-        if (!rehber.izinVar()) { soyle("Rehberine erişemiyorum. Kurulumdan rehber iznini vermen gerekiyor."); return }
-        hafiza.secim(soylenen)?.let { anahtar -> rehber.idIle(anahtar)?.let { devam(it); return } }
-        val eslesmeler = rehber.bul(varyantlar)
-        if (eslesmeler.isEmpty()) {
-            soyle("Rehberde bu isimde birini bulamadım.")
+    private fun kisiBul(varyantlar: List<String>, soylenen: String, mesajMi: Boolean, tam: Boolean = false, devam: (Kisi) -> Unit) {
+        // "onu ara", "ona yaz": son konuşulan kişi
+        if (Turkce.lower(soylenen.trim()) in KomutCozucu.ZAMIRLER || soylenen.isBlank()) {
+            val s = sonKisi
+            if (s != null) { devam(s); return }
+            soyle(if (mesajMi) "Kime yazayım?" else "Kimi arayayım?")
             return
         }
-        // Kişi başına en iyi numara
-        val kisiBasi = eslesmeler.groupBy { it.kisi.contactId }.map { (_, l) -> l.first() }.sortedByDescending { it.puan }
-        val ilk = kisiBasi[0]
-        val ikinci = kisiBasi.getOrNull(1)
-        if (ikinci == null || ilk.puan - ikinci.puan >= 0.12) { devam(ilk.kisi); return }
-        val secenekler = kisiBasi.filter { ilk.puan - it.puan < 0.12 }.take(3).map { it.kisi }
-        val sayi = listOf("", "bir", "iki", "üç")[secenekler.size]
-        val ortak = secenekler.first().ad.split(' ').first()
-        val soru = "Rehberinde $sayi $ortak var. Hangisini ${if (mesajMi) "seçeyim" else "arayayım"}?"
-        _durum.update { it.copy(ekran = Ekran.KisiSec(soru, secenekler, mesajMi)) }
-        bekleyen = Bekleyen.Secim(secenekler, { k -> hafiza.secimKaydet(soylenen, k.anahtar); devam(k) })
-        sorVeDinle(soru)
+        if (!rehber.izinVar()) { soyle("Rehberine erişemiyorum. Kurulumdan rehber iznini vermen gerekiyor."); return }
+        if (!tam) hafiza.secim(soylenen)?.let { anahtar -> rehber.idIle(anahtar)?.let { sonKisi = it; devam(it); return } }
+        val es = rehber.kisiler(varyantlar)
+        when (val kr = KisiEsle.karar(es.map { KisiEsle.Sonuc(it.kisi, it.puan) }, tam)) {
+            is KisiEsle.Karar.Yok -> soyle(if (tam) "Rehberde tam “$soylenen” diye kayıtlı birini bulamadım." else "Rehberde “$soylenen” diye birini bulamadım.")
+            is KisiEsle.Karar.Tek -> { sonKisi = kr.oge; devam(kr.oge) }
+            is KisiEsle.Karar.Sor -> {
+                val secenekler = kr.adaylar
+                val sayi = listOf("", "bir", "iki", "üç")[secenekler.size]
+                val ortak = secenekler.first().ad.split(' ').first()
+                val soru = "Rehberinde $sayi $ortak var. Hangisini ${if (mesajMi) "seçeyim" else "arayayım"}?"
+                _durum.update { it.copy(ekran = Ekran.KisiSec(soru, secenekler, mesajMi)) }
+                bekleyen = Bekleyen.Secim(secenekler, { k -> hafiza.secimKaydet(soylenen, k.anahtar); sonKisi = k; devam(k) })
+                sorVeDinle(soru)
+            }
+        }
     }
 
     fun kisiSec(k: Kisi) {
@@ -373,25 +498,27 @@ class Asistan(private val a: CezeriApp) {
     }
 
     private fun aramaOnayla(k: Kisi) {
+        sonKisi = k
         _durum.update { it.copy(ekran = Ekran.AramaOnay(k)) }
         bekleyen = Bekleyen.Onay(
             evet = {
                 hafiza.isEkle("ara", "${Turkce.ekle(k.ad, belirtme = true)} aradı", "Sesli onayla")
-                anaEkrana()
+                donus()
                 soyle("Tamam, arıyorum.") { eylem.ara(k.numara) }
             },
-            hayir = { anaEkrana(); soyle("Peki, vazgeçtim.") },
+            hayir = { donus(); soyle("Peki, vazgeçtim.") },
             degistir = null,
         )
         sorVeDinle("${kime(k, belirtme = true)} arayayım mı?")
     }
 
     private fun mesajOnayla(k: Kisi, metin: String, kanal: Kanal) {
+        sonKisi = k
         val kanal2 = if (kanal == Kanal.WHATSAPP && !eylem.whatsappVar()) Kanal.SMS else kanal
         _durum.update { it.copy(ekran = Ekran.MesajOnay(k, metin, kanal2)) }
         bekleyen = Bekleyen.Onay(
             evet = { gonder(k, metin, kanal2) },
-            hayir = { anaEkrana(); soyle("Peki, vazgeçtim.") },
+            hayir = { donus(); soyle("Peki, vazgeçtim.") },
             degistir = { bekleyen = Bekleyen.Govde(k, kanal2); sorVeDinle("Yeni hâlini söyler misin?") },
         )
         sorVeDinle("${kime(k, belirtme = false)} şunu yazıyorum: $metin. Göndereyim mi?")
@@ -403,13 +530,13 @@ class Asistan(private val a: CezeriApp) {
         _durum.update { it.copy(ekran = e.copy(kanal = kanal)) }
         bekleyen = Bekleyen.Onay(
             evet = { gonder(e.kisi, e.metin, kanal) },
-            hayir = { anaEkrana(); soyle("Peki, vazgeçtim.") },
+            hayir = { donus(); soyle("Peki, vazgeçtim.") },
             degistir = { bekleyen = Bekleyen.Govde(e.kisi, kanal); sorVeDinle("Yeni hâlini söyler misin?") },
         )
     }
 
     private fun gonder(k: Kisi, metin: String, kanal: Kanal) {
-        anaEkrana()
+        donus()
         when (kanal) {
             Kanal.SMS -> {
                 if (eylem.sms(k.numara, metin)) {
@@ -460,12 +587,19 @@ class Asistan(private val a: CezeriApp) {
                     if (t.contains("sms") || t.contains("kısa mesaj")) { kanalSec(Kanal.SMS); sorVeDinle("Tamam, SMS olarak göndereyim mi?"); return }
                     if (t.contains("whatsapp")) { kanalSec(Kanal.WHATSAPP); sorVeDinle("Tamam, WhatsApp'tan göndereyim mi?"); return }
                 }
-                when (if (metin.isBlank()) Turkce.Cevap.BILINMIYOR else Turkce.answer(metin)) {
+                val cvp = if (metin.isBlank()) Turkce.Cevap.BILINMIYOR else Turkce.answer(metin)
+                if (b.yumusak && cvp != Turkce.Cevap.EVET && cvp != Turkce.Cevap.HAYIR) {
+                    // Bilgi sorusunun ardından gelen başka bir istek: yeni komut olarak işle
+                    bekleyen = null
+                    if (metin.isNotBlank()) isle(metin, listOf(metin) + alternatifler)
+                    return
+                }
+                when (cvp) {
                     Turkce.Cevap.EVET -> { bekleyen = null; b.evet() }
                     Turkce.Cevap.HAYIR -> { bekleyen = null; b.hayir() }
                     Turkce.Cevap.DEGISTIR -> { bekleyen = null; (b.degistir ?: b.hayir)() }
                     Turkce.Cevap.BILINMIYOR -> {
-                        if (b.deneme >= 1) { bekleyen = null; anaEkrana(); soyle("Cevap gelmedi, işlemi iptal ettim.") }
+                        if (b.deneme >= 1) { bekleyen = null; donus(); soyle("Cevap gelmedi, işlemi iptal ettim.") }
                         else { bekleyen = b.copy(deneme = b.deneme + 1); sorVeDinle("Evet mi, hayır mı?") }
                     }
                 }
@@ -474,11 +608,11 @@ class Asistan(private val a: CezeriApp) {
                 if (metin.isNotBlank() && Turkce.answer(metin) == Turkce.Cevap.HAYIR) { iptal(sessiz = false); return }
                 val secilen = secimiAnla(b.secenekler, listOf(metin) + alternatifler)
                 if (secilen != null) { bekleyen = null; b.sec(secilen); return }
-                if (b.deneme >= 1) { bekleyen = null; anaEkrana(); soyle("Anlayamadım, işlemi iptal ettim.") }
+                if (b.deneme >= 1) { bekleyen = null; donus(); soyle("Anlayamadım, işlemi iptal ettim.") }
                 else { bekleyen = b.copy(deneme = b.deneme + 1); sorVeDinle(if (b.secenekler.size == 2) "Birinciyi mi, ikinciyi mi?" else "Kaçıncısı?") }
             }
             is Bekleyen.Govde -> {
-                if (metin.isBlank()) { bekleyen = null; anaEkrana(); soyle("Cevap gelmedi, işlemi iptal ettim."); return }
+                if (metin.isBlank()) { bekleyen = null; donus(); soyle("Cevap gelmedi, işlemi iptal ettim."); return }
                 if (Turkce.norm(metin) in setOf("iptal", "vazgec", "bosver")) { iptal(sessiz = false); return }
                 bekleyen = null
                 val m = metin.trim().replaceFirstChar { it.titlecase(Turkce.TR) }
@@ -530,7 +664,7 @@ class Asistan(private val a: CezeriApp) {
         kulak.birak()
         sohbetIsi?.cancel()
         ses.sus()
-        anaEkrana()
+        donus()
         if (!sessiz) soyle("Peki.")
     }
 
@@ -554,6 +688,7 @@ class Asistan(private val a: CezeriApp) {
     fun gelenArama(numara: String?) {
         if (!hafiza.kurulumBitti || aramada || !prefs.getBoolean("arama_haber", true)) return
         aramada = true
+        sesli = true
         val kisi = numara?.let { n -> if (rehber.izinVar()) rehberBul(n).firstOrNull() else null }
         val kim = kisi?.ad ?: if (numara.isNullOrBlank()) "Bir numara" else "Kayıtlı olmayan bir numara"
         ses.sus(); kulak.birak(); uyanma.durdur()
@@ -711,7 +846,9 @@ class Asistan(private val a: CezeriApp) {
 
     private fun sohbet(metin: String) {
         sohbetIsi?.cancel()
-        _durum.update { it.copy(ekran = Ekran.Sohbet, sohbet = it.sohbet + SohbetMesaji(true, metin)) }
+        kullaniciSatiri(metin)
+        _durum.update { it.copy(ekran = Ekran.Sohbet) }
+        modelEylemi = false
         when (akil.durum.value) {
             Akil.Durum.HAZIR -> Unit
             Akil.Durum.YUKLENIYOR -> { cevapEkle("Bir saniye, aklımı topluyorum. Birazdan tekrar sorar mısın?"); return }
@@ -734,12 +871,19 @@ class Asistan(private val a: CezeriApp) {
                 akil.sor(metin)
                     .catch { e -> throw e }
                     .collect { parca ->
+                        if (modelEylemi) return@collect
                         tum.append(parca)
                         tampon.append(parca)
                         sonMesajiGuncelle(temizMetin(tum.toString()), bitti = false)
                         if (ilk) { _durum.update { it.copy(dusunuyor = false) }; ilk = false }
                         cumleleriSoyle(tampon, son = false)
                     }
+                if (modelEylemi) {
+                    // Model bir iş başlattı (arama/mesaj/alarm): akışı uygulama devraldı, model cümlesini gösterme
+                    _durum.update { d -> d.copy(sohbet = d.sohbet.toMutableList().also { l -> if (l.isNotEmpty() && !l.last().benden) l.removeAt(l.lastIndex) }) }
+                    akil.turuKaydet(metin, "(İstek uygulamaya iletildi.)")
+                    return@launch
+                }
                 cumleleriSoyle(tampon, son = true)
                 var cevap = temizMetin(tum.toString())
                 // Cümle yarıda kaldıysa (bağlam doldu) sohbeti tazeleyip bir kez yeniden sor
@@ -753,7 +897,7 @@ class Asistan(private val a: CezeriApp) {
                     }
                     if (ek.isNotBlank()) {
                         cevap = temizMetin(ek.toString())
-                        ses.sus(); ses.konus(cevap)
+                        ses.sus(); if (sesliMi()) ses.konus(cevap)
                     }
                 }
                 tekrarDenendi = false
@@ -780,12 +924,12 @@ class Asistan(private val a: CezeriApp) {
             if (idx == null || (idx == s.length - 1 && !son)) break
             val cumle = temizMetin(s.substring(0, idx + 1))
             tampon.delete(0, idx + 1)
-            if (cumle.isNotBlank()) ses.ekle(cumle)
+            if (cumle.isNotBlank() && sesliMi()) ses.ekle(cumle)
         }
         if (son) {
             val kalan = temizMetin(tampon.toString())
             tampon.clear()
-            if (kalan.isNotBlank()) ses.ekle(kalan)
+            if (kalan.isNotBlank() && sesliMi()) ses.ekle(kalan)
         }
     }
 
@@ -802,7 +946,7 @@ class Asistan(private val a: CezeriApp) {
 
     private fun cevapEkle(metin: String) {
         _durum.update { it.copy(sohbet = it.sohbet + SohbetMesaji(false, metin)) }
-        soyle(metin)
+        if (sesliMi()) ses.konus(metin)
     }
 
     fun yeniSohbet() {
@@ -811,6 +955,145 @@ class Asistan(private val a: CezeriApp) {
         scope.launch { if (akil.durum.value == Akil.Durum.HAZIR) akil.yeniSohbet() }
     }
 
+
+    // ---------------------------------------------------------------- Modelin başlattığı işler
+
+    /** Gemma bir araç çağırınca (arka iş parçacığından) gelir. */
+    private fun modelEylem(tur: String, x: String, y: String): String {
+        return when (tur) {
+            "ara" -> {
+                modelEylemi = true
+                anaIs.post {
+                    ses.sus()
+                    val n = x.filter { it.isDigit() }
+                    if (n.length >= 7) aramaOnayla(numaraKisi(x))
+                    else kisiBul(KomutCozucu.isimVaryant(x, Turkce.Ek.BELIRTME), x, mesajMi = false) { aramaOnayla(it) }
+                }
+                "Uygulama arama onayını kullanıcıya soruyor. Başka bir şey söyleme."
+            }
+            "mesaj" -> {
+                modelEylemi = true
+                anaIs.post {
+                    ses.sus()
+                    val n = x.filter { it.isDigit() }
+                    val govde = y.trim().replaceFirstChar { it.titlecase(Turkce.TR) }
+                    val devam: (Kisi) -> Unit = { k ->
+                        if (govde.isBlank()) { bekleyen = Bekleyen.Govde(k, null); sorVeDinle("Ne yazayım?") }
+                        else mesajOnayla(k, govde, Kanal.SMS)
+                    }
+                    if (n.length >= 7) devam(numaraKisi(x))
+                    else kisiBul(KomutCozucu.isimVaryant(x, Turkce.Ek.YONELME), x, mesajMi = true, devam = devam)
+                }
+                "Uygulama mesaj onayını kullanıcıya soruyor. Başka bir şey söyleme."
+            }
+            "alarm" -> {
+                val z = Turkce.parseTime(x) ?: return "Saat anlaşılamadı; kullanıcıya saati sor."
+                modelEylemi = true
+                anaIs.post { ses.sus(); alarmKur(z.first, z.second) }
+                "Alarm kuruluyor."
+            }
+            "hatirla" -> {
+                if (x.isBlank()) return "Bilgi boş."
+                hafiza.notEkle(x.trim().replaceFirstChar { it.titlecase(Turkce.TR) })
+                anaIs.post { notlariYenile() }
+                "Kaydedildi. Kullanıcıya kısaca aklında tuttuğunu söyle."
+            }
+            "vakit" -> {
+                val k = a.konum.kayitli() ?: return "Konum bilinmiyor; kullanıcı Ayarlar'dan konum izni vermeli."
+                val g = Namaz.bugun(k.first, k.second)
+                val (v, saat, kalan) = Namaz.siradaki(k.first, k.second)
+                Namaz.Vakit.entries.joinToString(", ") { "${it.ad} ${g.saat(it)}" } +
+                    ". Sıradaki: ${v.ad} ${"%02d:%02d".format(saat / 60 % 24, saat % 60)}, ${Namaz.sureMetni(kalan)} kaldı."
+            }
+            else -> "Bilinmeyen istek"
+        }
+    }
+
+    // ---------------------------------------------------------------- Aşama 4: vakit, kıble, hafıza
+
+    private fun konumla(metin: String, is_: (Pair<Double, Double>) -> Unit) {
+        val k = a.konum.kayitli()
+        if (k != null) { is_(k); a.konum.guncelle(); return }
+        if (!a.konum.izinVar()) {
+            cevapGoster(metin, "Vakitleri ve kıbleyi hesaplamam için konum izni gerekiyor. Ayarlar'daki Namaz bölümünden verebilirsin.")
+            return
+        }
+        cevapGoster(metin, "Konumunu buluyorum, bir saniye.")
+        buTurYazili = true
+        a.konum.guncelle { y ->
+            if (y == null) soyle("Konumunu bulamadım. Konum servisini açıp tekrar dener misin?")
+            else { buTurYazili = true; is_(y) }
+        }
+    }
+
+    private fun hhmm(dk: Int) = "%02d:%02d".format((dk / 60) % 24, dk % 60)
+
+    private fun vakitCevapla(k: Komut.Vakit, metin: String) = konumla(metin) { (enlem, boylam) ->
+        val g = Namaz.bugun(enlem, boylam)
+        val cal = java.util.Calendar.getInstance()
+        val simdi = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE)
+        val cevap = when {
+            k.hepsi -> "Bugün imsak ${g.saat(Namaz.Vakit.IMSAK)}, güneş ${g.saat(Namaz.Vakit.GUNES)}, öğle ${g.saat(Namaz.Vakit.OGLE)}, " +
+                "ikindi ${g.saat(Namaz.Vakit.IKINDI)}, akşam ${g.saat(Namaz.Vakit.AKSAM)}, yatsı ${g.saat(Namaz.Vakit.YATSI)}."
+            k.hangi != null -> {
+                val v = Namaz.Vakit.bul(k.hangi) ?: Namaz.Vakit.OGLE
+                val t = g.dakikalar[v] ?: 0
+                val iftar = v == Namaz.Vakit.AKSAM && Turkce.lower(metin).contains("iftar")
+                val ad = if (iftar) "İftar" else if (v == Namaz.Vakit.GUNES) "Güneş" else "${v.ad} ezanı"
+                if (t > simdi) "$ad ${hhmm(t)}'${ekDe(t)}. ${Namaz.sureMetni(t - simdi)} kaldı."
+                else {
+                    val (s2, st, kalan) = Namaz.siradaki(enlem, boylam)
+                    "${v.ad} bugün ${hhmm(t)}'${ekDe(t)} girdi. Sıradaki ${s2.ad}, ${hhmm(st)}'${ekDe(st)}; ${Namaz.sureMetni(kalan)} var."
+                }
+            }
+            else -> {
+                val (v, t, kalan) = Namaz.siradaki(enlem, boylam)
+                "Sıradaki vakit ${v.ad.lowercase(Turkce.TR)}, ${hhmm(t)}'${ekDe(t)}. ${Namaz.sureMetni(kalan)} kaldı."
+            }
+        }
+        cevapGoster(metin, cevap)
+    }
+
+    /** "12:30'da", "17:40'ta": son sayının okunuşuna göre -da/-de/-ta/-te */
+    private fun ekDe(dk: Int): String {
+        val d = dk % 60
+        val okunus = com.erkam.cezeri.ses.SayiOku.yaz((if (d == 0) (dk / 60) % 24 else d).toLong())
+        val son = okunus.last()
+        val sert = son in "fstkçşhp"
+        val unlu = okunus.lastOrNull { it in "aeıioöuü" } ?: 'e'
+        val kalin = unlu in "aıou"
+        return (if (sert) "t" else "d") + (if (kalin) "a" else "e")
+    }
+
+    private fun kibleGoster(metin: String) = konumla(metin) { (enlem, boylam) ->
+        val d = Namaz.kible(enlem, boylam)
+        val yon = Namaz.yonAdi(d)
+        kullaniciSatiri(metin)
+        _durum.update { it.copy(ekran = Ekran.Kible(d, yon)) }
+        val c = "Kıble, kuzeyden ${Math.round(d)} derece, $yon yönünde. Telefonu düz tut; ok altın rengine dönünce Kâbe'ye bakıyorsun."
+        _durum.update { it.copy(sohbet = it.sohbet + SohbetMesaji(false, c)) }
+        if (sesliMi()) ses.konus(c)
+    }
+
+    fun kibleAc() = kibleGoster("Kıble ne tarafta?")
+
+    /** Vakit hatırlatıcısı sesli seçiliyse */
+    fun vakitHatirlat(metin: String) {
+        if (bekleyen != null || _durum.value.dinliyor || aramada) return
+        ses.konus(metin)
+    }
+
+    fun siradakiVakit(): Triple<Namaz.Vakit, Int, Int>? = a.konum.kayitli()?.let { Namaz.siradaki(it.first, it.second) }
+    fun bugunkuVakitler(): Namaz.Gun? = a.konum.kayitli()?.let { Namaz.bugun(it.first, it.second) }
+    fun konumGuncelle() = a.konum.guncelle { com.erkam.cezeri.asistan.VakitHatirlatici.planla(a) }
+    fun konumIzniVar() = a.konum.izinVar()
+
+    private fun notlariYenile() {
+        _durum.update { it.copy(notlar = hafiza.notlar()) }
+        scope.launch { if (akil.durum.value == Akil.Durum.HAZIR) akil.tazele() }
+    }
+
+    fun notSil(id: Long) { hafiza.notSil(id); notlariYenile() }
 
     companion object { const val ORNEK = 6 }
 }

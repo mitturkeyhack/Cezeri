@@ -31,6 +31,21 @@ jobs:
           curl -fsSL -o app/src/main/assets/fonts/inter.ttf "https://github.com/google/fonts/raw/main/ofl/inter/Inter%5Bopsz,wght%5D.ttf" || true
           ls -la app/src/main/assets/fonts
 
+      - name: Anlama sınavı
+        run: gradle :app:testReleaseUnitTest --continue
+
+      - name: Sınav sonucu
+        if: failure()
+        run: |
+          for f in app/build/test-results/testReleaseUnitTest/*.xml; do
+            python3 - "$f" << 'PY'
+          import sys, xml.etree.ElementTree as ET
+          for tc in ET.parse(sys.argv[1]).getroot().iter('testcase'):
+              for fl in tc.findall('failure'):
+                  print("SINAV-HATA", tc.get('name'), "::", (fl.get('message') or '')[:300])
+          PY
+          done
+
       - name: Derle
         run: gradle :app:assembleRelease --stacktrace
 

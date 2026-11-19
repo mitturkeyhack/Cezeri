@@ -96,6 +96,7 @@ fun KurulumIzinler(vm: Asistan) {
             IzinSatiri("Telefon", "Senin için arama yapabilmem için", Ik.TELEFON, Manifest.permission.CALL_PHONE),
             IzinSatiri("SMS", "Senin yerine mesaj göndermem için", Ik.MESAJ, Manifest.permission.SEND_SMS),
             IzinSatiri("Gelen aramalar", "Kimin aradığını söyleyip sesle açabilmem için", Ik.ZIL, Manifest.permission.READ_PHONE_STATE, ekIzinler = listOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.ANSWER_PHONE_CALLS)),
+            IzinSatiri("Konum", "Namaz vakitleri ve kıble yönü için", Ik.BILGI, Manifest.permission.ACCESS_FINE_LOCATION, ekIzinler = listOf(Manifest.permission.ACCESS_COARSE_LOCATION)),
             IzinSatiri("Bildirimler", "Hazırlık durumunu gösterebilmem için", Ik.ZIL, Manifest.permission.POST_NOTIFICATIONS),
             IzinSatiri("Pil: Kısıtlanmamış", "Arka planda kapanmamam için", Ik.PIL, null, "pil"),
         )

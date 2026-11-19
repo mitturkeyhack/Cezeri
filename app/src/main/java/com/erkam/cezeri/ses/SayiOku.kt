@@ -45,7 +45,7 @@ object SayiOku {
         t = t.replace(Regex("[*_#`>|]+"), " ")
         t = t.replace(Regex("\\bvs\\.?\\b"), "ile")
         // Saat: 14:30 / 09.05
-        t = Regex("\\b([01]?\\d|2[0-3])[:.]([0-5]\\d)\\b(?![.,]\\d)").replace(t) { m ->
+        t = Regex("(?<!\\d)([01]?\\d|2[0-3])[:.]([0-5]\\d)(?![.,]?\\d)['’]?").replace(t) { m ->
             val s = m.groupValues[1].toInt(); val d = m.groupValues[2].toInt()
             yaz(s.toLong()) + if (d == 0) "" else " " + yaz(d.toLong())
         }

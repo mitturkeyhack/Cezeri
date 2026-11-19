@@ -60,6 +60,7 @@ import com.erkam.cezeri.Ekran
 import com.erkam.cezeri.core.Akil
 import com.erkam.cezeri.core.Ses
 import com.erkam.cezeri.ses.CezeriSesi
+import com.erkam.cezeri.asistan.VakitHatirlatici
 import com.erkam.cezeri.core.Uyanma
 
 private fun varsayilanAsistanMi(ctx: Context): Boolean = try {
@@ -231,6 +232,12 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
             Bolum("SES")
             SesBolumu(vm)
 
+            Bolum("NAMAZ")
+            NamazBolumu(vm, d, yenile) { yenile++ }
+
+            Bolum("HAFIZA")
+            HafizaBolumu(vm, d)
+
             Bolum("AKIL")
             AyarKarti {
                 AyarSatiri(
@@ -248,7 +255,7 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
                 AyarSatiri("İzinler", "Mikrofon, rehber, telefon, SMS", Ik.AYAR, tikla = { vm.kurulumAdim(1) }) {}
             }
             Spacer(Modifier.height(8.dp))
-            Text("Cezerî · Aşama 3 · Yeni ses", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            Text("Cezerî · Aşama 4", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         }
     }
 }
@@ -297,6 +304,89 @@ private fun UyanmaTesti(vm: Asistan) {
         }
         if (t.karar.isNotBlank()) Text("Sonuç: ${t.karar}", style = govde(13.sp, Renk.Altin, FontWeight.SemiBold))
         t.hata?.let { Text(it, style = govde(12.sp, Renk.Kirmizi)) }
+    }
+}
+
+@Composable
+private fun NamazBolumu(vm: Asistan, d: Durum, yenile: Int, tazele: () -> Unit) {
+    val ctx = LocalContext.current
+    val izin = remember(yenile) { vm.konumIzniVar() }
+    val izinIste = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) {
+        tazele(); if (vm.konumIzniVar()) vm.konumGuncelle()
+    }
+    var hatirlat by remember { mutableStateOf(VakitHatirlatici.acik(ctx)) }
+    var once by remember { mutableIntStateOf(VakitHatirlatici.once(ctx)) }
+    var sesli by remember { mutableStateOf(VakitHatirlatici.sesli(ctx)) }
+    val tamZaman = remember(yenile) { VakitHatirlatici.tamZamanliIzin(ctx) }
+    AyarKarti {
+        AyarSatiri(
+            "Konum",
+            when {
+                !izin -> "Vakitler ve kıble için gerekli"
+                d.konum == null -> "Konum bulunuyor…"
+                else -> "Kayıtlı · %.3f, %.3f".format(d.konum.first, d.konum.second)
+            },
+            Ik.BILGI,
+            tamam = izin && d.konum != null,
+            tikla = {
+                if (!izin) izinIste.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+                else vm.konumGuncelle()
+            },
+        ) {}
+        Ayrac()
+        AyarSatiri("Vakit hatırlatıcı", if (hatirlat) "Ezandan $once dakika önce haber veririm" else "Kapalı", Ik.ALARM) {
+            Anahtar(hatirlat) { hatirlat = it; VakitHatirlatici.ayarla(ctx, acik = it) }
+        }
+        if (hatirlat) {
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                listOf(5, 10, 15, 30).forEach { dk ->
+                    val secili = dk == once
+                    Box(
+                        Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(12.dp))
+                            .background(if (secili) Renk.AltinZemin else Renk.KartKoyu)
+                            .border(1.dp, if (secili) Renk.Altin else Renk.Cizgi, RoundedCornerShape(12.dp))
+                            .clickable(role = Role.Button) { once = dk; VakitHatirlatici.ayarla(ctx, once = dk) },
+                        contentAlignment = Alignment.Center,
+                    ) { Text("$dk dk", style = govde(14.sp, if (secili) Renk.Altin else Renk.SolukAcik, FontWeight.Medium)) }
+                }
+            }
+            Ayrac()
+            AyarSatiri("Sesli söyle", "Bildirimle birlikte Cezerî de söyler", Ik.HOPARLOR) {
+                Anahtar(sesli) { sesli = it; VakitHatirlatici.ayarla(ctx, sesli = it) }
+            }
+            if (!tamZaman) {
+                Ayrac()
+                AyarSatiri("Tam vaktinde hatırlat", "Dakikası dakikasına haber vermem için izin ver", Ik.AYAR, tikla = {
+                    ac(ctx, Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + ctx.packageName)))
+                }) {}
+            }
+        }
+        Ayrac()
+        AyarSatiri("Kıble", "Pusulayla Kâbe yönünü göster", Ik.BILGI, tikla = { vm.kibleAc() }) {}
+    }
+}
+
+@Composable
+private fun HafizaBolumu(vm: Asistan, d: Durum) {
+    AyarKarti {
+        if (d.notlar.isEmpty()) {
+            Text("“Şunu hatırla: annemin doğum günü 3 Mart” dersen burada durur; sorduğunda hatırlarım.", style = govde(13.sp, Renk.Soluk))
+        } else {
+            Text("Aklımda tuttuklarım", style = govde(15.sp, Renk.Yazi, FontWeight.SemiBold))
+            Spacer(Modifier.height(8.dp))
+            d.notlar.reversed().forEachIndexed { i, n ->
+                if (i > 0) Box(Modifier.padding(vertical = 8.dp).fillMaxWidth().height(1.dp).background(Renk.KartCizgi))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(n.metin, style = govde(14.sp, Renk.SolukAcik), modifier = Modifier.weight(1f))
+                    Box(
+                        Modifier.size(32.dp).clip(CircleShape).clickable(role = Role.Button) { vm.notSil(n.id) }
+                            .semantics { contentDescription = "Sil" },
+                        contentAlignment = Alignment.Center,
+                    ) { Ikon(Ik.KAPAT, Renk.Soluk, 14.dp, 2f) }
+                }
+            }
+        }
     }
 }
 

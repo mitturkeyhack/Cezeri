@@ -80,39 +80,18 @@ class Rehber(private val ctx: Context) {
         return list
     }
 
-    /** Söylenen isme en uygun kişileri puanlayarak döndürür. */
-    fun bul(varyantlar: List<String>): List<Eslesme> {
-        val sorgular = varyantlar.map { Turkce.norm(it) }.filter { it.length >= 2 }.distinct()
-        if (sorgular.isEmpty()) return emptyList()
-        val sonuc = ArrayList<Eslesme>()
-        for (k in hepsi()) {
-            val ad = Turkce.norm(k.ad)
-            val tokens = ad.split(' ').filter { it.isNotBlank() }
-            var best = 0.0
-            for (q in sorgular) {
-                val qTokens = q.split(' ')
-                val p = when {
-                    ad == q -> 1.0
-                    tokens.any { it == q } -> 0.95
-                    qTokens.size > 1 && qTokens.all { qt -> tokens.any { it == qt } } -> 0.97
-                    q.length >= 3 && (ad.startsWith(q) || tokens.any { it.startsWith(q) }) -> 0.86
-                    q.length >= 4 && tokens.any { q.startsWith(it) && it.length >= 3 } -> 0.82
-                    else -> {
-                        val s = (tokens + ad).maxOf { Turkce.similarity(q, it) }
-                        if (s >= 0.72) 0.55 + 0.3 * s else 0.0
-                    }
-                }
-                if (p > best) best = p
-            }
-            if (best >= 0.7) sonuc.add(Eslesme(k, best))
-        }
-        // Aynı kişinin birden fazla numarası: mobil öne
-        return sonuc.sortedWith(
-            compareByDescending<Eslesme> { it.puan }
-                .thenByDescending { if (it.kisi.etiket == "Mobil") 1 else 0 }
-                .thenByDescending { it.kisi.sonGorusme }
-        )
-    }
+    /** Söylenen isme en uygun kişileri puanlayarak döndürür (kişi başına tek satır değil; her numara ayrı). */
+    fun bul(varyantlar: List<String>): List<Eslesme> =
+        KisiEsle.sirala(hepsi(), { it.ad }, varyantlar).map { Eslesme(it.oge, it.puan) }
+            .sortedWith(
+                compareByDescending<Eslesme> { it.puan }
+                    .thenByDescending { if (it.kisi.etiket == "Mobil") 1 else 0 }
+                    .thenByDescending { it.kisi.sonGorusme }
+            )
+
+    /** Kişi başına en iyi numara, puana göre. */
+    fun kisiler(varyantlar: List<String>): List<Eslesme> =
+        bul(varyantlar).groupBy { it.kisi.contactId }.map { it.value.first() }.sortedByDescending { it.puan }
 
     fun idIle(anahtar: String): Kisi? = hepsi().firstOrNull { it.anahtar == anahtar }
 }

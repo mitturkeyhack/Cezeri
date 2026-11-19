@@ -79,6 +79,7 @@ fun Uygulama(vm: Asistan, d: Durum) {
             Ekran.Ayarlar -> AyarlarEkrani(vm, d)
             is Ekran.GelenArama -> GelenAramaEkrani(vm, e)
             is Ekran.SesKaydi -> SesKaydiEkrani(vm, e)
+            is Ekran.Kible -> KibleEkrani(vm, e)
         }
         val tamEkran = d.ekran == Ekran.Ana || d.ekran == Ekran.Sohbet
         AnimatedVisibility(d.dinliyor && tamEkran, enter = fadeIn(), exit = fadeOut()) {
@@ -151,7 +152,9 @@ fun AnaEkran(vm: Asistan, d: Durum) {
                 Text(durumYazisi(d), style = govde(13.sp, Renk.TurkuazAcik, FontWeight.Medium))
             }
         }
-        Spacer(Modifier.height(26.dp))
+        Spacer(Modifier.height(20.dp))
+        VakitKarti(vm, d)
+        Spacer(Modifier.height(16.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("SON İŞLER", style = etiket())
             Spacer(Modifier.weight(1f))
