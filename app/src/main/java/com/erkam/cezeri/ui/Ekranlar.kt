@@ -76,6 +76,8 @@ fun Uygulama(vm: Asistan, d: Durum) {
             is Ekran.KisiSec -> KisiSecEkrani(vm, e)
             is Ekran.AramaOnay -> AramaOnayEkrani(vm, e.kisi)
             is Ekran.MesajOnay -> MesajOnayEkrani(vm, e)
+            Ekran.Ayarlar -> AyarlarEkrani(vm, d)
+            is Ekran.SesKaydi -> SesKaydiEkrani(vm, e)
         }
         val tamEkran = d.ekran == Ekran.Ana || d.ekran == Ekran.Sohbet
         AnimatedVisibility(d.dinliyor && tamEkran, enter = fadeIn(), exit = fadeOut()) {
@@ -126,11 +128,12 @@ fun AnaEkran(vm: Asistan, d: Durum) {
             Spacer(Modifier.width(10.dp))
             Text("CEZERÎ", style = baslik(20.sp, Renk.Altin).copy(fontWeight = FontWeight.Bold, letterSpacing = 4.sp))
             Spacer(Modifier.weight(1f))
-            YuvarlakDugme(Ik.AYAR, "Ayarlar", ikonBoyut = 20.dp) { bilgi = true }
+            YuvarlakDugme(Ik.AYAR, "Ayarlar", ikonBoyut = 20.dp) { vm.ayarlar() }
         }
         Column(Modifier.fillMaxWidth().padding(top = 26.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.clickable(role = Role.Button) { vm.mikrofon() }) {
-                Amblem(190.dp, don = d.konusuyor, nabiz = d.konusuyor)
+            val dokunma = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            Box(Modifier.clickable(interactionSource = dokunma, indication = null, role = Role.Button) { vm.mikrofon() }) {
+                Amblem(190.dp, don = d.konusuyor, nabiz = false)
             }
             Spacer(Modifier.height(22.dp))
             Text(selamlama(), style = baslik(36.sp), textAlign = TextAlign.Center)
@@ -172,6 +175,7 @@ private fun durumRengi(d: Durum): Color = when (d.akil) {
 }
 
 private fun durumYazisi(d: Durum): String = when {
+    d.akil == Akil.Durum.HAZIR && d.uyanmaAcik && d.uyanmaModel is com.erkam.cezeri.core.Uyanma.ModelDurumu.Hazir -> "“Hey Cezerî” dediğinde uyanır"
     d.akil == Akil.Durum.HAZIR -> "Mikrofona dokun ve konuş"
     d.akil == Akil.Durum.YUKLENIYOR -> "Aklını topluyor…"
     d.model is ModelIndirici.Durum.Iniyor -> {
@@ -270,17 +274,21 @@ fun DinliyorKatmani(vm: Asistan, d: Durum) {
             Text("DİNLİYORUM", style = etiket(Renk.TurkuazAcik))
         }
         Spacer(Modifier.height(90.dp))
-        Box(contentAlignment = Alignment.Center) {
-            Box(Modifier.size((210 + 50 * d.seviye).dp).clip(CircleShape).background(Renk.Turkuaz.copy(alpha = 0.08f)))
-            Amblem(196.dp, don = true, nabiz = true, aciklama = "Cezerî dinliyor")
+        // Sabit boyutlu alan: hiçbir şey büyüyüp küçülmez, sadece kadran döner
+        Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(232.dp).clip(CircleShape).background(Renk.Turkuaz.copy(alpha = 0.06f)))
+            Amblem(196.dp, don = true, nabiz = false, aciklama = "Cezerî dinliyor")
         }
         Spacer(Modifier.height(36.dp))
-        Dalga(d.seviye)
+        Box(Modifier.height(48.dp), contentAlignment = Alignment.Center) { Dalga(d.seviye) }
         Spacer(Modifier.height(30.dp))
-        Text(
-            if (d.araMetin.isBlank()) "…" else "“${d.araMetin}”",
-            style = baslik(32.sp), textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp)
-        )
+        Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.TopCenter) {
+            Text(
+                if (d.araMetin.isBlank()) "…" else "“${d.araMetin}”",
+                style = baslik(32.sp), textAlign = TextAlign.Center, maxLines = 3,
+                modifier = Modifier.padding(horizontal = 8.dp)
+            )
+        }
         Spacer(Modifier.weight(1f))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             SadeDugme("Vazgeç", Modifier.weight(1f), 54.dp) { vm.dinlemeyiBirak() }
@@ -382,7 +390,7 @@ private fun KisiBasligi(k: Kisi) {
 fun AramaOnayEkrani(vm: Asistan, k: Kisi) {
     BackHandler { vm.onayHayir() }
     Column(Modifier.fillMaxSize().background(Renk.Zemin).statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp, vertical = 26.dp)) {
-        CezeriSoruyor("Sesli soruyor", "${Turkce.ekle(k.ad, belirtme = true)} arayayım mı?")
+        CezeriSoruyor("Sesli soruyor", "${vm.kime(k, belirtme = true)} arayayım mı?")
         Spacer(Modifier.height(22.dp))
         Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Renk.KartKoyu).border(1.dp, Renk.Cizgi, RoundedCornerShape(20.dp)).padding(16.dp)) {
             KisiBasligi(k)
@@ -400,7 +408,7 @@ fun AramaOnayEkrani(vm: Asistan, k: Kisi) {
 fun MesajOnayEkrani(vm: Asistan, e: Ekran.MesajOnay) {
     BackHandler { vm.onayHayir() }
     Column(Modifier.fillMaxSize().background(Renk.Zemin).statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp, vertical = 26.dp)) {
-        CezeriSoruyor("Mesajı sesli okuyor", "${Turkce.ekle(e.kisi.ad, belirtme = false)} şunu yazıyorum. Göndereyim mi?")
+        CezeriSoruyor("Mesajı sesli okuyor", "${vm.kime(e.kisi, belirtme = false)} şunu yazıyorum. Göndereyim mi?")
         Spacer(Modifier.height(22.dp))
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Renk.KartKoyu).border(1.dp, Renk.Cizgi, RoundedCornerShape(20.dp))) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) { KisiBasligi(e.kisi) }

@@ -3,8 +3,8 @@ package com.erkam.cezeri.core
 enum class Kanal { SMS, WHATSAPP }
 
 sealed interface Komut {
-    data class Ara(val isimVaryantlari: List<String>, val soylenen: String) : Komut
-    data class Mesaj(val isimVaryantlari: List<String>, val soylenen: String, val metin: String?, val kanal: Kanal?) : Komut
+    data class Ara(val isimVaryantlari: List<String>, val soylenen: String, val numara: String? = null) : Komut
+    data class Mesaj(val isimVaryantlari: List<String>, val soylenen: String, val metin: String?, val kanal: Kanal?, val numara: String? = null) : Komut
     data class Fener(val ac: Boolean) : Komut
     data class Alarm(val saat: Int?, val dakika: Int?) : Komut
     data object SaatKac : Komut
@@ -75,6 +75,9 @@ object KomutCozucu {
         val tKanalsiz = t.replace(Regex("whatsapp'?tan|whatsapp\\s+ile|whatsapp\\s+[üu]zerinden|sms\\s+ile|smsle|sms\\s+olarak"), " ")
             .replace(Regex("\\s+"), " ").trim()
 
+        // Numarayla: "0539 893 45 98'i ara", "539 893 45 98'e mesaj gönder: geliyorum"
+        numaraKomutu(tKanalsiz, kanal)?.let { return it }
+
         // Mesaj
         mesaj1.find(tKanalsiz)?.let { m ->
             val alici = m.groupValues[1]
@@ -117,6 +120,31 @@ object KomutCozucu {
         }
 
         return Komut.Sohbet(ham.trim())
+    }
+
+    private val numaraBasta = Regex("^(\\+?\\d[\\d\\s-]{5,}\\d)\\s*(?:'?\\s*(?:y?[ıiuüea]|n[ıiuü]|ya|ye))?\\s+(.+)$")
+    private val numaraSonda = Regex("^ara\\s+(\\+?\\d[\\d\\s-]{5,}\\d)$")
+
+    private fun numaraKomutu(t: String, kanal: Kanal?): Komut? {
+        numaraSonda.find(t)?.let { m ->
+            val n = m.groupValues[1].filter { it.isDigit() || it == '+' }
+            return Komut.Ara(emptyList(), n, numara = n)
+        }
+        val m = numaraBasta.find(t) ?: return null
+        val n = m.groupValues[1].filter { it.isDigit() || it == '+' }
+        if (n.count { it.isDigit() } < 7) return null
+        val geri = m.groupValues[2].trim()
+        if (Regex("^(?:telefonla\\s+|hemen\\s+)?(?:ara|arar\\s*m[ıi]s[ıi]n|arayabilir\\s*m[ıi]s[ıi]n|aray[ıi]n)(?:\\s+l[üu]tfen)?$").matches(geri)) {
+            return Komut.Ara(emptyList(), n, numara = n)
+        }
+        Regex("^(?:bir\\s+)?(?:mesaj|sms|whatsapp(?:\\s*mesaj[ıi])?)?\\s*(?:at|g[öo]nder|yaz|yolla)(?:ar\\s*m[ıi]s[ıi]n|abilir\\s*m[ıi]s[ıi]n)?\\s*[:,]?\\s*(.*)$").find(geri)?.let { mm ->
+            val body = govdeTemizle(mm.groupValues[1])
+            return Komut.Mesaj(emptyList(), n, body.ifBlank { null }, kanal, numara = n)
+        }
+        Regex("^(.+?)\\s+(?:diye\\s+)?(?:yaz|mesaj\\s+at|mesaj\\s+g[öo]nder|ilet|yolla)$").find(geri)?.let { mm ->
+            return Komut.Mesaj(emptyList(), n, govdeTemizle(mm.groupValues[1]), kanal, numara = n)
+        }
+        return null
     }
 
     /** "ahmet yılmaz'ı" -> ["ahmet yılmaz", "ahmet yılmaz'ı", ...]; son kelimenin eki atılır. */

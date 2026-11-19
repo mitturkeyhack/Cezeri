@@ -181,7 +181,7 @@ fun KurulumIzinler(vm: Asistan) {
         }
         Spacer(Modifier.height(14.dp))
         Text(
-            "WhatsApp erişimi ve yan tuş kısayolu sonraki aşamalarda eklenecek.",
+            "“Hey Cezerî”, ses kimliği ve yan tuş ayarları Ayarlar ekranında.",
             style = govde(12.sp, Renk.Soluk), modifier = Modifier.padding(horizontal = 6.dp)
         )
         Spacer(Modifier.height(14.dp))

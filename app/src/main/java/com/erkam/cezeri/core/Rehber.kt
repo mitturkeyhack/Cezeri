@@ -16,6 +16,7 @@ data class Kisi(
     /** Ekranda gösterilecek kısaltılmış numara: 0532 ••• •• 12 */
     val gizliNumara: String
         get() {
+            if (contactId == -1L) return ad
             val d = numara.filter { it.isDigit() }
             if (d.length < 6) return numara
             val tail = d.takeLast(2)

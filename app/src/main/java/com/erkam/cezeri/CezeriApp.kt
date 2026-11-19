@@ -7,6 +7,7 @@ import com.erkam.cezeri.core.Hafiza
 import com.erkam.cezeri.core.ModelIndirici
 import com.erkam.cezeri.core.Rehber
 import com.erkam.cezeri.core.Ses
+import com.erkam.cezeri.core.Uyanma
 
 class CezeriApp : Application() {
     lateinit var ses: Ses; private set
@@ -15,6 +16,9 @@ class CezeriApp : Application() {
     lateinit var rehber: Rehber; private set
     lateinit var eylem: Eylem; private set
     lateinit var hafiza: Hafiza; private set
+    lateinit var asistan: Asistan; private set
+    lateinit var uyanma: Uyanma; private set
+    @Volatile var onPlanda: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -25,5 +29,7 @@ class CezeriApp : Application() {
         eylem = Eylem(this)
         hafiza = Hafiza(this)
         model.devamEt()
+        uyanma = Uyanma(this)
+        asistan = Asistan(this)
     }
 }

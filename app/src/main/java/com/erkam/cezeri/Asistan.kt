@@ -1,9 +1,6 @@
 package com.erkam.cezeri
 
-import android.app.Application
 import android.speech.SpeechRecognizer
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import com.erkam.cezeri.core.Akil
 import com.erkam.cezeri.core.Kanal
 import com.erkam.cezeri.core.Kisi
@@ -13,7 +10,12 @@ import com.erkam.cezeri.core.Kulak
 import com.erkam.cezeri.core.ModelIndirici
 import com.erkam.cezeri.core.SonIs
 import com.erkam.cezeri.core.Turkce
+import com.erkam.cezeri.core.Uyanma
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -27,6 +29,8 @@ sealed interface Ekran {
     data class KisiSec(val soru: String, val secenekler: List<Kisi>, val mesajMi: Boolean) : Ekran
     data class AramaOnay(val kisi: Kisi) : Ekran
     data class MesajOnay(val kisi: Kisi, val metin: String, val kanal: Kanal) : Ekran
+    data object Ayarlar : Ekran
+    data class SesKaydi(val adim: Int, val toplam: Int, val mesaj: String, val bitti: Boolean = false) : Ekran
 }
 
 data class SohbetMesaji(val benden: Boolean, val metin: String, val bitti: Boolean = true)
@@ -43,18 +47,23 @@ data class Durum(
     val isler: List<SonIs> = emptyList(),
     val model: ModelIndirici.Durum = ModelIndirici.Durum.Yok,
     val akil: Akil.Durum = Akil.Durum.MODEL_YOK,
+    val bekliyor: Boolean = false,
+    val uyanmaModel: Uyanma.ModelDurumu = Uyanma.ModelDurumu.Yok,
+    val uyanmaAcik: Boolean = false,
+    val kimlikOrnek: Int = 0,
+    val uyanmaHassasiyet: Float = 0.5f,
 )
 
-class Asistan(app: Application) : AndroidViewModel(app) {
+class Asistan(private val a: CezeriApp) {
 
-    private val a = app as CezeriApp
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ses = a.ses
     private val akil = a.akil
     private val model = a.model
     private val rehber = a.rehber
     private val eylem = a.eylem
     private val hafiza = a.hafiza
-    val kulak = Kulak(app)
+    val kulak = Kulak(a)
 
     private val _durum = MutableStateFlow(
         Durum(
@@ -71,16 +80,28 @@ class Asistan(app: Application) : AndroidViewModel(app) {
         data class AlarmSaati(val deneme: Int = 0) : Bekleyen
     }
 
+    private val uyanma = a.uyanma
+    private val kayitVektorleri = ArrayList<DoubleArray>()
+
     private var bekleyen: Bekleyen? = null
+        set(v) { field = v; _durum.update { it.copy(bekliyor = v != null) } }
     private var sohbetIsi: Job? = null
 
     init {
-        viewModelScope.launch { kulak.dinliyor.collect { v -> _durum.update { it.copy(dinliyor = v) } } }
-        viewModelScope.launch { kulak.araMetin.collect { v -> _durum.update { it.copy(araMetin = v) } } }
-        viewModelScope.launch { kulak.seviye.collect { v -> _durum.update { it.copy(seviye = v) } } }
-        viewModelScope.launch { ses.konusuyor.collect { v -> _durum.update { it.copy(konusuyor = v) } } }
-        viewModelScope.launch { akil.durum.collect { v -> _durum.update { it.copy(akil = v) } } }
-        viewModelScope.launch {
+        scope.launch { kulak.dinliyor.collect { v -> _durum.update { it.copy(dinliyor = v) } } }
+        scope.launch { kulak.araMetin.collect { v -> _durum.update { it.copy(araMetin = v) } } }
+        scope.launch { kulak.seviye.collect { v -> _durum.update { it.copy(seviye = v) } } }
+        scope.launch { ses.konusuyor.collect { v -> _durum.update { it.copy(konusuyor = v) } } }
+        scope.launch { akil.durum.collect { v -> _durum.update { it.copy(akil = v) } } }
+        _durum.update { it.copy(uyanmaAcik = uyanma.acik, kimlikOrnek = uyanma.ornekSayisi(), uyanmaHassasiyet = uyanma.hassasiyet) }
+        scope.launch {
+            uyanma.modelDurumu.collect { v ->
+                _durum.update { it.copy(uyanmaModel = v) }
+                // Model inince, açık bırakıldıysa dinlemeyi başlat
+                if (v is Uyanma.ModelDurumu.Hazir && uyanma.acik && a.onPlanda) UyanikServis.baslat(a)
+            }
+        }
+        scope.launch {
             model.durum.collect { v ->
                 _durum.update { it.copy(model = v) }
                 if (v is ModelIndirici.Durum.Hazir && akil.durum.value == Akil.Durum.MODEL_YOK) {
@@ -128,7 +149,11 @@ class Asistan(app: Application) : AndroidViewModel(app) {
     }
 
     fun dinle() {
-        kulak.dinle { sonuc -> duydu(sonuc) }
+        // Arka plandaki "Hey Cezerî" dinlemesi mikrofonu tutuyorsa önce bırakılır
+        if (uyanma.dinliyor.value) {
+            uyanma.durdur()
+            scope.launch { delay(250); kulak.dinle { sonuc -> duydu(sonuc) } }
+        } else kulak.dinle { sonuc -> duydu(sonuc) }
     }
 
     fun dinlemeyiBirak() {
@@ -187,7 +212,7 @@ class Asistan(app: Application) : AndroidViewModel(app) {
             }
         }
         when (val k = komut) {
-            is Komut.Ara -> kisiBul(k.isimVaryantlari, k.soylenen, mesajMi = false) { aramaOnayla(it) }
+            is Komut.Ara -> if (k.numara != null) aramaOnayla(numaraKisi(k.numara)) else kisiBul(k.isimVaryantlari, k.soylenen, mesajMi = false) { aramaOnayla(it) }
             is Komut.Mesaj -> mesajKomutu(k)
             is Komut.Fener -> {
                 val ok = eylem.fener(k.ac)
@@ -209,7 +234,24 @@ class Asistan(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun numaraKisi(numara: String): Kisi {
+        var d = numara.filter { it.isDigit() }
+        if (d.startsWith("90") && d.length == 12) d = "0" + d.drop(2)
+        if (d.length == 10 && d.startsWith("5")) d = "0$d"
+        val bicim = if (d.length == 11) "${d.substring(0, 4)} ${d.substring(4, 7)} ${d.substring(7, 9)} ${d.substring(9)}" else numara
+        return Kisi(-1L, bicim, if (numara.startsWith("+")) numara else d, "Numara", 0L)
+    }
+
+    fun kime(k: Kisi, belirtme: Boolean): String =
+        if (k.contactId == -1L) (if (belirtme) "Bu numarayı" else "Bu numaraya") else Turkce.ekle(k.ad, belirtme)
+
     private fun mesajKomutu(k: Komut.Mesaj) {
+        if (k.numara != null) {
+            val kisi = numaraKisi(k.numara)
+            if (k.metin.isNullOrBlank()) { bekleyen = Bekleyen.Govde(kisi, k.kanal); sorVeDinle("Ne yazayım?") }
+            else mesajOnayla(kisi, k.metin, k.kanal ?: Kanal.SMS)
+            return
+        }
         var varyant = k.isimVaryantlari
         var metin = k.metin
         // "babama akşama geliyorum yaz": iki kelimelik alıcı bulunamazsa ilk kelimeyi dene
@@ -268,7 +310,7 @@ class Asistan(app: Application) : AndroidViewModel(app) {
             hayir = { anaEkrana(); soyle("Peki, vazgeçtim.") },
             degistir = null,
         )
-        sorVeDinle("${Turkce.ekle(k.ad, belirtme = true)} arayayım mı?")
+        sorVeDinle("${kime(k, belirtme = true)} arayayım mı?")
     }
 
     private fun mesajOnayla(k: Kisi, metin: String, kanal: Kanal) {
@@ -279,7 +321,7 @@ class Asistan(app: Application) : AndroidViewModel(app) {
             hayir = { anaEkrana(); soyle("Peki, vazgeçtim.") },
             degistir = { bekleyen = Bekleyen.Govde(k, kanal2); sorVeDinle("Yeni hâlini söyler misin?") },
         )
-        sorVeDinle("${Turkce.ekle(k.ad, belirtme = false)} şunu yazıyorum: $metin. Göndereyim mi?")
+        sorVeDinle("${kime(k, belirtme = false)} şunu yazıyorum: $metin. Göndereyim mi?")
     }
 
     fun kanalSec(kanal: Kanal) {
@@ -402,6 +444,85 @@ class Asistan(app: Application) : AndroidViewModel(app) {
 
     private fun isleriYenile() { _durum.update { it.copy(isler = hafiza.isler()) } }
 
+    // ---------------------------------------------------------------- Ayarlar ve Aşama 2
+
+    fun ayarlar() { _durum.update { it.copy(ekran = Ekran.Ayarlar) } }
+
+    fun uyanmaAyarla(ac: Boolean) {
+        uyanma.acik = ac
+        _durum.update { it.copy(uyanmaAcik = ac) }
+        if (ac) {
+            if (uyanma.modellerVar()) UyanikServis.baslat(a) else uyanma.indir()
+            soyle(if (uyanma.modellerVar()) "Tamam. Artık “Hey Cezerî” dediğinde uyanırım." else "Önce uyanma modelini indiriyorum, birkaç dakika sürer.")
+        } else {
+            UyanikServis.durdur(a)
+            uyanma.durdur()
+        }
+    }
+
+    fun hassasiyetAyarla(v: Float) {
+        uyanma.hassasiyet = v
+        _durum.update { it.copy(uyanmaHassasiyet = v) }
+    }
+
+    fun uyanmaModeliIndir() = uyanma.indir()
+
+    fun sesKaydiBaslat() {
+        if (!uyanma.modellerVar()) {
+            uyanma.indir()
+            soyle("Önce ses tanıma modelini indirmem gerekiyor. İnince tekrar dene.")
+            return
+        }
+        ses.sus(); kulak.birak()
+        uyanma.duraklatildi = true
+        uyanma.durdur()
+        kayitVektorleri.clear()
+        kayitAdimi(ilk = true)
+    }
+
+    private fun kayitAdimi(ilk: Boolean = false, tekrar: Boolean = false) {
+        val n = kayitVektorleri.size
+        val mesaj = when {
+            tekrar -> "Bu kayıt net olmadı, bir daha söyler misin?"
+            ilk -> "Şimdi sesini tanıyacağım. Ben söyle dediğimde “Hey Cezerî” de."
+            n == 4 -> "Şimdi dışarıda ya da biraz gürültülü bir yerde söyle."
+            else -> "Güzel. Bir daha söyle."
+        }
+        _durum.update { it.copy(ekran = Ekran.SesKaydi(n, ORNEK, mesaj)) }
+        ses.sus()
+        ses.konus(mesaj) {
+            if (_durum.value.ekran !is Ekran.SesKaydi) return@konus
+            uyanma.ornekAl { v, _ ->
+                if (_durum.value.ekran !is Ekran.SesKaydi) return@ornekAl
+                if (v == null) { kayitAdimi(tekrar = true); return@ornekAl }
+                kayitVektorleri.add(v)
+                if (kayitVektorleri.size >= ORNEK) {
+                    uyanma.kimligiKaydet(kayitVektorleri)
+                    uyanma.duraklatildi = false
+                    _durum.update { it.copy(ekran = Ekran.SesKaydi(ORNEK, ORNEK, "Sesini tanıdım. Artık yalnızca sana cevap veririm.", bitti = true), kimlikOrnek = uyanma.ornekSayisi()) }
+                    soyle("Sesini tanıdım. Artık yalnızca sana cevap veririm.")
+                } else kayitAdimi()
+            }
+        }
+    }
+
+    fun sesKaydiTekrar() {
+        uyanma.durdur()
+        kayitAdimi(tekrar = true)
+    }
+
+    fun sesKaydiKapat() {
+        uyanma.durdur()
+        uyanma.duraklatildi = false
+        ses.sus()
+        _durum.update { it.copy(ekran = Ekran.Ayarlar, kimlikOrnek = uyanma.ornekSayisi()) }
+    }
+
+    fun kimligiSil() {
+        uyanma.kimligiSil()
+        _durum.update { it.copy(kimlikOrnek = 0) }
+    }
+
     // ---------------------------------------------------------------- Sohbet
 
     private fun sohbet(metin: String) {
@@ -421,7 +542,7 @@ class Asistan(app: Application) : AndroidViewModel(app) {
             }
         }
         _durum.update { it.copy(dusunuyor = true, sohbet = it.sohbet + SohbetMesaji(false, "", bitti = false)) }
-        sohbetIsi = viewModelScope.launch {
+        sohbetIsi = scope.launch {
             val tampon = StringBuilder()
             val tum = StringBuilder()
             var ilk = true
@@ -486,11 +607,9 @@ class Asistan(app: Application) : AndroidViewModel(app) {
     fun yeniSohbet() {
         sohbetIsi?.cancel(); ses.sus()
         _durum.update { it.copy(sohbet = emptyList()) }
-        viewModelScope.launch { if (akil.durum.value == Akil.Durum.HAZIR) akil.yeniSohbet() }
+        scope.launch { if (akil.durum.value == Akil.Durum.HAZIR) akil.yeniSohbet() }
     }
 
-    override fun onCleared() {
-        kulak.birak()
-        super.onCleared()
-    }
+
+    companion object { const val ORNEK = 6 }
 }

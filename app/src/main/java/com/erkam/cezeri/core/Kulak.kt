@@ -1,9 +1,11 @@
 package com.erkam.cezeri.core
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,9 +39,9 @@ class Kulak(private val ctx: Context) {
         _ara.value = ""
         val cihazIci = !cihazIciCalismiyor && SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
         val r = try {
-            if (cihazIci) SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx) else SpeechRecognizer.createSpeechRecognizer(ctx)
+            if (cihazIci) SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx) else normalTanici()
         } catch (e: Exception) {
-            SpeechRecognizer.createSpeechRecognizer(ctx)
+            normalTanici()
         }
         rec = r
         var bitti = false
@@ -100,6 +102,24 @@ class Kulak(private val ctx: Context) {
             r.startListening(intent)
         } catch (e: Exception) {
             bitir(Sonuc.Hata(-1))
+        }
+    }
+
+    /**
+     * Cezerî varsayılan asistan olunca sistem kendi (boş) tanıma servisimizi varsayılan yapabilir.
+     * Bu yüzden tanıyıcıyı açıkça seçiyoruz: önce Google, sonra Samsung, sonra herhangi biri (bizimki hariç).
+     */
+    private fun normalTanici(): SpeechRecognizer {
+        return try {
+            val servisler = ctx.packageManager.queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
+                .map { it.serviceInfo }
+                .filter { it.packageName != ctx.packageName }
+            val oncelik = listOf("com.google.android.googlequicksearchbox", "com.google.android.tts", "com.google.android.as", "com.samsung")
+            val secim = oncelik.firstNotNullOfOrNull { p -> servisler.firstOrNull { it.packageName.startsWith(p) } } ?: servisler.firstOrNull()
+            if (secim != null) SpeechRecognizer.createSpeechRecognizer(ctx, ComponentName(secim.packageName, secim.name))
+            else SpeechRecognizer.createSpeechRecognizer(ctx)
+        } catch (e: Exception) {
+            SpeechRecognizer.createSpeechRecognizer(ctx)
         }
     }
 

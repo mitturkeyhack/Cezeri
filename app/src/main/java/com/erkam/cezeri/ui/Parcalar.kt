@@ -233,13 +233,15 @@ fun Kart(modifier: Modifier = Modifier, zemin: Color = Renk.Kart, cizgi: Color =
 @Composable
 fun Dalga(seviye: Float, renkler: List<Color> = listOf(Renk.Turkuaz, Renk.Altin), yukseklik: Dp = 48.dp) {
     val t = rememberInfiniteTransition(label = "dalga")
-    val faz by t.animateFloat(0f, (2 * Math.PI).toFloat(), infiniteRepeatable(tween(1000, easing = LinearEasing)), label = "faz")
+    val faz by t.animateFloat(0f, (2 * Math.PI).toFloat(), infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "faz")
+    // Ses seviyesi ani zıplamasın diye yumuşatılır
+    val sev by androidx.compose.animation.core.animateFloatAsState(seviye, tween(220), label = "seviye")
     Canvas(Modifier.width(110.dp).height(yukseklik)) {
         val n = 10
         val bosluk = size.width / n
         for (i in 0 until n) {
-            val temel = 0.35f + 0.65f * ((sin(faz + i * 0.8f) + 1f) / 2f)
-            val h = size.height * (0.25f + 0.75f * temel * (0.45f + 0.55f * seviye))
+            val temel = 0.45f + 0.55f * ((sin(faz + i * 0.7f) + 1f) / 2f)
+            val h = size.height * (0.3f + 0.7f * temel * (0.5f + 0.5f * sev))
             val x = bosluk * i + bosluk / 2
             drawLine(
                 if (i % 3 == 1) renkler[1] else renkler[0],
