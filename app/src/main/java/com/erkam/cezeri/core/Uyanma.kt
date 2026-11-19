@@ -191,7 +191,7 @@ class Uyanma(private val ctx: Context) {
         _model.value = ModelDurumu.Yok
     }
 
-    fun kimligiSil() { prefs.edit().remove("merkez").remove("esik").remove("ornek").apply() }
+    fun kimligiSil() { prefs.edit().remove("merkez").remove("esik").remove("ornek").remove("ornekler").apply() }
 
     fun kimligiKaydet(vektorler: List<DoubleArray>) {
         if (vektorler.isEmpty()) return
@@ -202,6 +202,7 @@ class Uyanma(private val ctx: Context) {
         // Kayıtlardaki en düşük benzerliğin biraz altı eşik olur
         val esik = (benzerlikler.minOrNull() ?: 0.5) - 0.18
         prefs.edit()
+            .putString("ornekler", vektorler.joinToString(";") { v -> v.joinToString(",") })
             .putString("merkez", merkez.joinToString(","))
             .putFloat("esik", esik.toFloat().coerceIn(0.10f, 0.80f))
             .putInt("ornek", vektorler.size)
@@ -211,12 +212,22 @@ class Uyanma(private val ctx: Context) {
     private fun merkez(): DoubleArray? = prefs.getString("merkez", null)?.split(',')?.map { it.toDouble() }?.toDoubleArray()
 
     /** Konuşan kişi sahibi mi? Kayıt yoksa herkes kabul. */
-    fun sesEsigi(): Double = (prefs.getFloat("esik", 0.40f) + (hassasiyet - 0.5f) * 0.3f).toDouble()
+    /**
+     * Gerçek kullanımda ses benzerliği kayıttakinden çok daha düşük çıkıyor (kısa söyleyiş, ortam sesi).
+     * Bu yüzden sabit ve gerçekçi bir eşik: Dengeli %22, Rahat %16, Katı %28.
+     */
+    fun sesEsigi(): Double = 0.22 + (hassasiyet - 0.5) * 0.2
 
+    private fun ornekler(): List<DoubleArray> = prefs.getString("ornekler", null)
+        ?.split(';')?.mapNotNull { r -> runCatching { r.split(',').map { it.toDouble() }.toDoubleArray() }.getOrNull() }
+        .orEmpty()
+
+    /** Kayıtlı örneklerin merkezine ve en yakın örneğe benzerliğin büyüğü */
     fun sesPuani(v: DoubleArray?): Double? {
         val m = merkez() ?: return null
         if (v == null) return 0.0
-        return kosinus(v, m)
+        val enYakin = ornekler().maxOfOrNull { kosinus(v, it) } ?: 0.0
+        return maxOf(kosinus(v, m), enYakin)
     }
 
     fun sahibiMi(v: DoubleArray?): Boolean {

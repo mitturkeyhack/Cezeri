@@ -471,12 +471,21 @@ fun SohbetEkrani(vm: Asistan, d: Durum) {
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Renk.Kart).border(1.dp, Renk.KartCizgi, RoundedCornerShape(16.dp)).padding(4.dp)
         ) {
-            Box(Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(12.dp)).background(Renk.KartCizgi), contentAlignment = Alignment.Center) {
-                Text("Hızlı", style = govde(13.sp, Renk.Yazi, FontWeight.SemiBold))
+            val derin = d.derinMod
+            val derinYazi = when (val m = d.derinModel) {
+                is ModelIndirici.Durum.Iniyor -> "Derin düşün · %" + (m.inen * 100 / maxOf(1L, m.toplam))
+                else -> "Derin düşün"
             }
-            Box(Modifier.weight(1f).height(44.dp).clickable { vm.konusKisa("Derin Düşün, bir sonraki aşamada geliyor.") }, contentAlignment = Alignment.Center) {
-                Text("Derin düşün · yakında", style = govde(13.sp, Renk.Soluk, FontWeight.Medium))
-            }
+            Box(
+                Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(12.dp)).background(if (!derin) Renk.KartCizgi else Color.Transparent)
+                    .clickable(role = Role.RadioButton) { vm.derinSec(false) },
+                contentAlignment = Alignment.Center
+            ) { Text("Hızlı", style = govde(13.sp, if (!derin) Renk.Yazi else Renk.Soluk, if (!derin) FontWeight.SemiBold else FontWeight.Medium)) }
+            Box(
+                Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(12.dp)).background(if (derin) Renk.AltinZemin else Color.Transparent)
+                    .clickable(role = Role.RadioButton) { vm.derinSec(true) },
+                contentAlignment = Alignment.Center
+            ) { Text(derinYazi, style = govde(13.sp, if (derin) Renk.AltinAcik else Renk.Soluk, if (derin) FontWeight.SemiBold else FontWeight.Medium)) }
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(), state = liste,

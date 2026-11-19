@@ -13,6 +13,7 @@ class CezeriApp : Application() {
     lateinit var ses: Ses; private set
     lateinit var akil: Akil; private set
     lateinit var model: ModelIndirici; private set
+    lateinit var modelDerin: ModelIndirici; private set
     lateinit var rehber: Rehber; private set
     lateinit var eylem: Eylem; private set
     lateinit var hafiza: Hafiza; private set
@@ -24,11 +25,13 @@ class CezeriApp : Application() {
         super.onCreate()
         ses = Ses(this)
         akil = Akil(this)
-        model = ModelIndirici(this)
+        model = ModelIndirici.hizli(this)
+        modelDerin = ModelIndirici.derin(this)
         rehber = Rehber(this)
         eylem = Eylem(this)
         hafiza = Hafiza(this)
         model.devamEt()
+        modelDerin.devamEt()
         uyanma = Uyanma(this)
         asistan = Asistan(this)
     }

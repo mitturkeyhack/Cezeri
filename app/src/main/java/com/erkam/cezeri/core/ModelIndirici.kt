@@ -15,7 +15,15 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /** Gemma 4 E2B model dosyasını bir kez indirir (DownloadManager: arka planda, kaldığı yerden devam eder). */
-class ModelIndirici(private val ctx: Context) {
+class ModelIndirici(
+    private val ctx: Context,
+    private val dosyaAdi: String,
+    private val urls: List<String>,
+    private val minBoyut: Long,
+    private val beklenenBoyut: Long,
+    prefsAdi: String,
+    private val baslik: String,
+) {
 
     sealed interface Durum {
         data object Yok : Durum
@@ -25,9 +33,9 @@ class ModelIndirici(private val ctx: Context) {
     }
 
     private val dir: File = File(ctx.getExternalFilesDir(null), "models").apply { mkdirs() }
-    val dosya: File = File(dir, DOSYA)
-    private val gecici: File = File(dir, "$DOSYA.part")
-    private val prefs = ctx.getSharedPreferences("model", Context.MODE_PRIVATE)
+    val dosya: File = File(dir, dosyaAdi)
+    private val gecici: File = File(dir, "$dosyaAdi.part")
+    private val prefs = ctx.getSharedPreferences(prefsAdi, Context.MODE_PRIVATE)
     private val dm = ctx.getSystemService(DownloadManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var izleme: Job? = null
@@ -35,7 +43,7 @@ class ModelIndirici(private val ctx: Context) {
     private val _durum = MutableStateFlow<Durum>(if (hazirMi()) Durum.Hazir else Durum.Yok)
     val durum: StateFlow<Durum> = _durum
 
-    fun hazirMi(): Boolean = dosya.exists() && dosya.length() >= MIN_BOYUT
+    fun hazirMi(): Boolean = dosya.exists() && dosya.length() >= minBoyut
 
     /** Uygulama açılışında: süren bir indirme varsa izlemeye devam et. */
     fun devamEt() {
@@ -54,10 +62,10 @@ class ModelIndirici(private val ctx: Context) {
     }
 
     private fun kuyruga(urlIndex: Int) {
-        if (urlIndex >= URLS.size) { _durum.value = Durum.Hata("İndirme başarısız oldu. İnternet bağlantını kontrol edip tekrar dene."); return }
+        if (urlIndex >= urls.size) { _durum.value = Durum.Hata("İndirme başarısız oldu. İnternet bağlantını kontrol edip tekrar dene."); return }
         gecici.delete()
-        val req = DownloadManager.Request(Uri.parse(URLS[urlIndex]))
-            .setTitle("Cezerî hazırlanıyor")
+        val req = DownloadManager.Request(Uri.parse(urls[urlIndex]))
+            .setTitle(baslik)
             .setDescription("Tek seferlik indirme")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
             .setDestinationUri(Uri.fromFile(gecici))
@@ -88,7 +96,7 @@ class ModelIndirici(private val ctx: Context) {
                 val (st, inen, toplam) = s
                 when (st) {
                     DownloadManager.STATUS_SUCCESSFUL -> {
-                        if (gecici.length() >= MIN_BOYUT) {
+                        if (gecici.length() >= minBoyut) {
                             dosya.delete()
                             gecici.renameTo(dosya)
                         }
@@ -103,7 +111,7 @@ class ModelIndirici(private val ctx: Context) {
                         kuyruga(urlIndex + 1)
                         return@launch
                     }
-                    else -> _durum.value = Durum.Iniyor(inen, if (toplam > 0) toplam else BEKLENEN_BOYUT)
+                    else -> _durum.value = Durum.Iniyor(inen, if (toplam > 0) toplam else beklenenBoyut)
                 }
                 delay(1000)
             }
@@ -118,12 +126,19 @@ class ModelIndirici(private val ctx: Context) {
     }
 
     companion object {
-        const val DOSYA = "gemma-4-E2B-it.litertlm"
-        const val BEKLENEN_BOYUT = 2_588_147_712L
-        const val MIN_BOYUT = 2_400_000_000L
-        val URLS = listOf(
-            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
-            "https://huggingface.co/eye-v/skyle-ai-models/resolve/main/gemma-4-E2B-it.litertlm",
+        fun hizli(ctx: Context) = ModelIndirici(
+            ctx, "gemma-4-E2B-it.litertlm",
+            listOf(
+                "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+                "https://huggingface.co/eye-v/skyle-ai-models/resolve/main/gemma-4-E2B-it.litertlm",
+            ),
+            2_400_000_000L, 2_722_352_245L, "model", "Cezerî hazırlanıyor",
+        )
+
+        fun derin(ctx: Context) = ModelIndirici(
+            ctx, "gemma-4-E4B-it.litertlm",
+            listOf("https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm"),
+            3_300_000_000L, 3_654_000_000L, "model_derin", "Cezerî: Derin Düşün indiriliyor",
         )
     }
 }

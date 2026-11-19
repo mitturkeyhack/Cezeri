@@ -51,6 +51,8 @@ data class Durum(
     val uyanmaModel: Uyanma.ModelDurumu = Uyanma.ModelDurumu.Yok,
     val uyanmaAcik: Boolean = false,
     val kimlikOrnek: Int = 0,
+    val derinMod: Boolean = false,
+    val derinModel: ModelIndirici.Durum = ModelIndirici.Durum.Yok,
     val uyanmaHassasiyet: Float = 0.5f,
 )
 
@@ -81,6 +83,8 @@ class Asistan(private val a: CezeriApp) {
     }
 
     private val uyanma = a.uyanma
+    private val prefs = a.getSharedPreferences("asistan", android.content.Context.MODE_PRIVATE)
+    private var derinIstek: Boolean = prefs.getBoolean("derin", false)
     private val kayitVektorleri = ArrayList<DoubleArray>()
 
     private var bekleyen: Bekleyen? = null
@@ -88,6 +92,9 @@ class Asistan(private val a: CezeriApp) {
     private var sohbetIsi: Job? = null
 
     init {
+        akil.araclar = com.erkam.cezeri.core.CezeriAraclari { rehberBul(it) }
+        _durum.update { it.copy(derinMod = derinIstek) }
+        if (derinIstek && a.modelDerin.hazirMi()) scope.launch { akil.yukle(a.modelDerin.dosya) }
         scope.launch { kulak.dinliyor.collect { v -> _durum.update { it.copy(dinliyor = v) } } }
         scope.launch { kulak.araMetin.collect { v -> _durum.update { it.copy(araMetin = v) } } }
         scope.launch { kulak.seviye.collect { v -> _durum.update { it.copy(seviye = v) } } }
@@ -104,8 +111,16 @@ class Asistan(private val a: CezeriApp) {
         scope.launch {
             model.durum.collect { v ->
                 _durum.update { it.copy(model = v) }
-                if (v is ModelIndirici.Durum.Hazir && akil.durum.value == Akil.Durum.MODEL_YOK) {
+                if (v is ModelIndirici.Durum.Hazir && akil.durum.value == Akil.Durum.MODEL_YOK && !derinIstek) {
                     launch { akil.yukle(model.dosya) }
+                }
+            }
+        }
+        scope.launch {
+            a.modelDerin.durum.collect { v ->
+                _durum.update { it.copy(derinModel = v) }
+                if (v is ModelIndirici.Durum.Hazir && derinIstek && akil.aktifModel != a.modelDerin.dosya) {
+                    launch { akil.yukle(a.modelDerin.dosya) }
                 }
             }
         }
@@ -230,8 +245,51 @@ class Asistan(private val a: CezeriApp) {
             Komut.Titresim -> { eylem.titresim(); soyle("Titreşime aldım.") }
             Komut.Iptal -> { iptal(sessiz = false) }
             is Komut.Selam -> sorVeDinle("Ve aleyküm selam. Buyur, dinliyorum.")
+            is Komut.Hesap -> {
+                val v = com.erkam.cezeri.core.Hesap.hesapla(k.ifade)
+                if (v == null) sohbet(metin)
+                else {
+                    val c = "Sonuç ${com.erkam.cezeri.core.Hesap.bicimle(v)}."
+                    _durum.update { it.copy(ekran = Ekran.Sohbet, sohbet = it.sohbet + SohbetMesaji(true, metin) + SohbetMesaji(false, c)) }
+                    soyle(c)
+                }
+            }
+            is Komut.RehberSor -> rehberCevapla(k, metin)
             is Komut.Sohbet -> sohbet(k.metin)
         }
+    }
+
+    private fun bicimliNumara(n: String): String {
+        var d = n.filter { it.isDigit() }
+        if (d.startsWith("90") && d.length == 12) d = "0" + d.drop(2)
+        if (d.length == 10 && d.startsWith("5")) d = "0$d"
+        return if (d.length == 11) "${d.substring(0, 4)} ${d.substring(4, 7)} ${d.substring(7, 9)} ${d.substring(9)}" else n
+    }
+
+    fun rehberBul(sorgu: String): List<Kisi> {
+        val rakam = sorgu.filter { it.isDigit() }
+        return if (rakam.length >= 7) {
+            val son = rakam.takeLast(10)
+            rehber.hepsi().filter { it.numara.filter { c -> c.isDigit() }.takeLast(10) == son }
+        } else {
+            rehber.bul(KomutCozucu.isimVaryant(sorgu, Turkce.Ek.BELIRTME)).groupBy { it.kisi.contactId }.map { it.value.first().kisi }
+        }
+    }
+
+    private fun rehberCevapla(k: Komut.RehberSor, metin: String) {
+        if (!rehber.izinVar()) { soyle("Rehberine erişemiyorum. Kurulumdan rehber iznini vermen gerekiyor."); return }
+        val bulunan = rehberBul(k.sorgu)
+        val rakamMi = k.sorgu.count { it.isDigit() } >= 7
+        val cevap = when {
+            bulunan.isEmpty() -> if (rakamMi) "Bu numara rehberinde kayıtlı değil." else "Rehberinde bu isimde birini bulamadım."
+            rakamMi -> "Evet, bu numara rehberinde ${bulunan.first().ad} olarak kayıtlı."
+            k.numaraIste && bulunan.size == 1 -> "${bulunan[0].ad}: ${bicimliNumara(bulunan[0].numara)}."
+            k.numaraIste -> bulunan.take(3).joinToString(". ") { "${it.ad}: ${bicimliNumara(it.numara)}" } + "."
+            bulunan.size == 1 -> "Evet, rehberinde ${bulunan[0].ad} var."
+            else -> "Evet, rehberinde ${bulunan.size} kişi var: " + bulunan.take(4).joinToString(", ") { it.ad } + "."
+        }
+        _durum.update { it.copy(ekran = Ekran.Sohbet, sohbet = it.sohbet + SohbetMesaji(true, metin) + SohbetMesaji(false, cevap)) }
+        soyle(cevap)
     }
 
     private fun numaraKisi(numara: String): Kisi {
@@ -444,6 +502,29 @@ class Asistan(private val a: CezeriApp) {
 
     private fun isleriYenile() { _durum.update { it.copy(isler = hafiza.isler()) } }
 
+    // ---------------------------------------------------------------- Derin Düşün (E4B)
+
+    fun derinSec(ac: Boolean) {
+        if (ac == derinIstek) return
+        val derin = a.modelDerin
+        if (ac && !derin.hazirMi()) {
+            derin.baslat()
+            derinIstek = true
+            prefs.edit().putBoolean("derin", true).apply()
+            _durum.update { it.copy(derinMod = true) }
+            soyle("Derin Düşün için daha güçlü aklı indiriyorum. Yaklaşık 3,7 GB; inince kendiliğinden geçerim. O zamana kadar hızlı akılla devam ediyorum.")
+            return
+        }
+        derinIstek = ac
+        prefs.edit().putBoolean("derin", ac).apply()
+        _durum.update { it.copy(derinMod = ac) }
+        val hedef = if (ac) derin.dosya else model.dosya
+        if (hedef.exists()) {
+            soyle(if (ac) "Derin düşünmeye geçiyorum, bir dakika sürebilir." else "Hızlı moda geçiyorum.")
+            scope.launch { akil.yukle(hedef) }
+        }
+    }
+
     // ---------------------------------------------------------------- Ayarlar ve Aşama 2
 
     fun ayarlar() { _durum.update { it.copy(ekran = Ekran.Ayarlar) } }
@@ -561,7 +642,24 @@ class Asistan(private val a: CezeriApp) {
                         cumleleriSoyle(tampon, son = false)
                     }
                 cumleleriSoyle(tampon, son = true)
-                sonMesajiGuncelle(temizMetin(tum.toString()), bitti = true)
+                var cevap = temizMetin(tum.toString())
+                // Cümle yarıda kaldıysa (bağlam doldu) sohbeti tazeleyip bir kez yeniden sor
+                if (!tekrarDenendi && cevap.isNotBlank() && !Regex("[.!?…)\"”]$").containsMatchIn(cevap)) {
+                    tekrarDenendi = true
+                    akil.tazele()
+                    val ek = StringBuilder()
+                    akil.sor("Son cevabın yarıda kesildi. Aynı soruya kısa ve tam bir cevap ver: $metin").collect { p ->
+                        ek.append(p)
+                        sonMesajiGuncelle(temizMetin(ek.toString()), bitti = false)
+                    }
+                    if (ek.isNotBlank()) {
+                        cevap = temizMetin(ek.toString())
+                        ses.sus(); ses.konus(cevap)
+                    }
+                }
+                tekrarDenendi = false
+                akil.turuKaydet(metin, cevap)
+                sonMesajiGuncelle(cevap, bitti = true)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 sonMesajiGuncelle(temizMetin(tum.toString()), bitti = true)
                 throw e
@@ -574,7 +672,7 @@ class Asistan(private val a: CezeriApp) {
         }
     }
 
-    private var ilkCumle = true
+    private var tekrarDenendi = false
 
     private fun cumleleriSoyle(tampon: StringBuilder, son: Boolean) {
         while (true) {

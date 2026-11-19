@@ -228,7 +228,7 @@ fun KurulumHazirlik(vm: Asistan, d: Durum) {
                         is ModelIndirici.Durum.Iniyor -> "${gb(m.inen)} / ${gb(m.toplam)} GB"
                         ModelIndirici.Durum.Hazir -> "Tamam"
                         is ModelIndirici.Durum.Hata -> "Hata"
-                        else -> "2,6 GB"
+                        else -> "2,7 GB"
                     },
                     style = govde(12.sp, Renk.Altin)
                 )

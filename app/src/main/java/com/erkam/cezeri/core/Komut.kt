@@ -15,6 +15,8 @@ sealed interface Komut {
     data object Titresim : Komut
     data object Iptal : Komut
     data class Selam(val tur: String) : Komut
+    data class Hesap(val ifade: String) : Komut
+    data class RehberSor(val sorgu: String, val numaraIste: Boolean) : Komut
     data class Sohbet(val metin: String) : Komut
 }
 
@@ -43,6 +45,12 @@ object KomutCozucu {
 
         // Selam
         if (Regex("^(selam[uü]n aleyk[uü]m|selam[uü]naleyk[uü]m|esselam[uü] aleyk[uü]m)").containsMatchIn(t)) return Komut.Selam("selam")
+
+        // Hesap: "3³ kaç", "5 çarpı 7", "200'ün yüzde 15'i"
+        Hesap.ifadeyeCevir(t)?.let { return Komut.Hesap(it) }
+
+        // Rehber sorusu
+        rehberSorusu(t)?.let { return it }
 
         // Fener
         if (t.contains("fener") || t.contains("feneri") || t.contains("el feneri")) {
@@ -143,6 +151,17 @@ object KomutCozucu {
         }
         Regex("^(.+?)\\s+(?:diye\\s+)?(?:yaz|mesaj\\s+at|mesaj\\s+g[öo]nder|ilet|yolla)$").find(geri)?.let { mm ->
             return Komut.Mesaj(emptyList(), n, govdeTemizle(mm.groupValues[1]), kanal, numara = n)
+        }
+        return null
+    }
+
+    private fun rehberSorusu(t: String): Komut? {
+        fun temiz(x: String) = x.replace(Regex("\\b(numaral[ıi]|numara|ki[şs]i|adl[ıi]|isimli)\\b"), " ").replace(Regex("\\s+"), " ").trim()
+        Regex("^(.+?)\\s+rehber(?:im)?(?:de|e)\\s+(?:var\\s*m[ıi]|kay[ıi]tl[ıi]\\s*m[ıi]|ekli\\s*mi)").find(t)?.let { return Komut.RehberSor(temiz(it.groupValues[1]), false) }
+        Regex("^rehber(?:im)?de\\s+(.+?)\\s+(?:var\\s*m[ıi]|kay[ıi]tl[ıi]\\s*m[ıi])").find(t)?.let { return Komut.RehberSor(temiz(it.groupValues[1]), false) }
+        Regex("^(.+?)\\s+kimin\\s+numaras[ıi]").find(t)?.let { return Komut.RehberSor(temiz(it.groupValues[1]), false) }
+        Regex("^(.+?)'?\\s*(?:n[ıiuü]n|[ıiuü]n)\\s+(?:telefon\\s+)?numaras[ıi]\\s*(?:ne|ka[çc]|nedir|neydi|ver|s[öo]yle)?").find(t)?.let {
+            return Komut.RehberSor(it.groupValues[1].trim(), true)
         }
         return null
     }
