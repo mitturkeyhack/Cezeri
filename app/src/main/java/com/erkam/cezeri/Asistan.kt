@@ -37,7 +37,7 @@ sealed interface Ekran {
     data class MesajOnay(val kisi: Kisi, val metin: String, val kanal: Kanal) : Ekran
     data object Ayarlar : Ekran
     data class GelenArama(val kim: String, val numara: String) : Ekran
-    data class SesKaydi(val adim: Int, val toplam: Int, val mesaj: String, val bitti: Boolean = false) : Ekran
+    data class SesKaydi(val adim: Int, val toplam: Int, val mesaj: String, val bitti: Boolean = false, val duyulanlar: List<String> = emptyList()) : Ekran
     data class Kible(val derece: Double, val yon: String) : Ekran
 }
 
@@ -95,6 +95,7 @@ class Asistan(private val a: CezeriApp) {
     private val prefs = a.getSharedPreferences("asistan", android.content.Context.MODE_PRIVATE)
     private var derinIstek: Boolean = prefs.getBoolean("derin", false)
     private val kayitVektorleri = ArrayList<DoubleArray>()
+    private val kayitSozleri = ArrayList<String>()
 
     private var bekleyen: Bekleyen? = null
         set(v) { field = v; _durum.update { it.copy(bekliyor = v != null) } }
@@ -160,14 +161,17 @@ class Asistan(private val a: CezeriApp) {
 
     fun sesAdi(): String? = ses.secilenSes
 
-    // Cezerî'nin sesi
+    // Cezerî'nin sesi (EVREN)
     val sesMotoru get() = ses.motor
     val sesStili get() = ses.stil
-    val cezeriSesDurumu get() = ses.cezeri.durum
+    val sesHizi get() = ses.hiz
+    val sesTarifi get() = ses.tarif
+    val sesHatasi get() = ses.evren.sonHata
+    val sesOnbellek get() = ses.evren.onbellekSayisi
     fun sesMotoruSec(m: String) = ses.motorSec(m)
     fun sesDene(stil: String) { kulak.birak(); ses.dene(stil) }
-    fun cezeriSesiIndir() = ses.sesIndir()
-    fun cezeriSesiSil() { ses.cezeri.sil() }
+    fun sesHiziSec(h: Float) = ses.hizSec(h)
+    fun sesTarifiSec(a: Boolean) = ses.tarifSec(a)
 
     // ---------------------------------------------------------------- Dinleme
 
@@ -773,35 +777,42 @@ class Asistan(private val a: CezeriApp) {
         ses.sus(); kulak.birak()
         uyanma.duraklatildi = true
         uyanma.durdur()
-        kayitVektorleri.clear()
+        kayitVektorleri.clear(); kayitSozleri.clear()
         kayitAdimi(ilk = true)
     }
 
     private fun kayitAdimi(ilk: Boolean = false, tekrar: Boolean = false) {
-        val n = kayitVektorleri.size
+        val n = kayitSozleri.size
         val mesaj = when {
-            tekrar -> "Bu kayıt net olmadı, bir daha söyler misin?"
-            ilk -> "Şimdi sesini tanıyacağım. Ben söyle dediğimde “Hey Cezerî” de."
-            n == 4 -> "Şimdi dışarıda ya da biraz gürültülü bir yerde söyle."
+            tekrar -> "Bunu net duyamadım, bir daha söyler misin?"
+            ilk -> "Her zamanki gibi “Hey Cezerî” de. Beş kez söyleteceğim."
+            n == 3 -> "Şimdi biraz uzaktan ya da sesli bir ortamda söyle."
             else -> "Güzel. Bir daha söyle."
         }
-        _durum.update { it.copy(ekran = Ekran.SesKaydi(n, ORNEK, mesaj)) }
+        _durum.update { it.copy(ekran = Ekran.SesKaydi(n, ORNEK, mesaj, duyulanlar = kayitSozleri.toList())) }
         ses.sus()
         ses.konus(mesaj) {
             if (_durum.value.ekran !is Ekran.SesKaydi) return@konus
-            uyanma.ornekAl { v, _ ->
+            uyanma.ornekAl { v, metin ->
                 if (_durum.value.ekran !is Ekran.SesKaydi) return@ornekAl
-                if (v == null) { kayitAdimi(tekrar = true); return@ornekAl }
-                kayitVektorleri.add(v)
-                if (kayitVektorleri.size >= ORNEK) {
-                    uyanma.kimligiKaydet(kayitVektorleri)
+                if (metin.isBlank() && v == null) { kayitAdimi(tekrar = true); return@ornekAl }
+                if (v != null) kayitVektorleri.add(v)
+                kayitSozleri.add(metin.ifBlank { "…" })
+                if (kayitSozleri.size >= ORNEK) {
+                    uyanma.ogret(kayitSozleri.filter { it != "…" })
+                    if (kayitVektorleri.size >= 3) uyanma.kimligiKaydet(kayitVektorleri)
                     uyanma.duraklatildi = false
-                    _durum.update { it.copy(ekran = Ekran.SesKaydi(ORNEK, ORNEK, "Sesini tanıdım. Artık yalnızca sana cevap veririm.", bitti = true), kimlikOrnek = uyanma.ornekSayisi()) }
-                    soyle("Sesini tanıdım. Artık yalnızca sana cevap veririm.")
+                    val son = "Söyleyişini öğrendim. Artık “Hey Cezerî” dediğinde uyanırım."
+                    _durum.update { it.copy(ekran = Ekran.SesKaydi(ORNEK, ORNEK, son, bitti = true, duyulanlar = kayitSozleri.toList()), kimlikOrnek = uyanma.ornekSayisi()) }
+                    soyle(son)
                 } else kayitAdimi()
             }
         }
     }
+
+    fun sadeceSahipSec(a: Boolean) { uyanma.sadeceSahip = a; _durum.update { it.copy(kimlikOrnek = uyanma.ornekSayisi()) } }
+    fun sadeceSahip(): Boolean = uyanma.sadeceSahip
+    fun ogrenilenSayisi(): Int = uyanma.ogrenilenler().size
 
     fun sesKaydiTekrar() {
         uyanma.durdur()
@@ -817,6 +828,7 @@ class Asistan(private val a: CezeriApp) {
 
     fun kimligiSil() {
         uyanma.kimligiSil()
+        uyanma.ogrenileniSil()
         _durum.update { it.copy(kimlikOrnek = 0) }
     }
 
@@ -913,6 +925,15 @@ class Asistan(private val a: CezeriApp) {
     }
 
     private fun cumleleriSoyle(tampon: StringBuilder, son: Boolean) {
+        // İlk ses gecikmesin: uzun bir ilk cümlede virgülde böl
+        if (!son && tampon.length > 70 && !Regex("[.!?…:;](\\s|$)").containsMatchIn(tampon)) {
+            val v = tampon.lastIndexOf(", ")
+            if (v > 30) {
+                val parca = temizMetin(tampon.substring(0, v + 1))
+                tampon.delete(0, v + 2)
+                if (parca.isNotBlank() && sesliMi()) ses.ekle(parca)
+            }
+        }
         while (true) {
             val s = tampon.toString()
             val idx = Regex("[.!?…:;](\\s|$)").find(s)?.range?.first
@@ -1091,5 +1112,5 @@ class Asistan(private val a: CezeriApp) {
 
     fun notSil(id: Long) { hafiza.notSil(id); notlariYenile() }
 
-    companion object { const val ORNEK = 6 }
+    companion object { const val ORNEK = 5 }
 }

@@ -29,7 +29,11 @@ class CezeriApp : Application() {
         hafiza = Hafiza(this)
         konum = Konum(this)
         // Eski sürümden kalan telefon içi akıl dosyalarını (Gemma, ~2,7–3,7 GB) sil: artık akıl EVREN'de
-        Thread { runCatching { java.io.File(getExternalFilesDir(null), "models").deleteRecursively() } }.start()
+        Thread {
+            runCatching { java.io.File(getExternalFilesDir(null), "models").deleteRecursively() }
+            // Eski telefon içi ses modeli (Supertonic, ~300 MB) artık kullanılmıyor
+            runCatching { java.io.File(filesDir, "supertonic").deleteRecursively() }
+        }.start()
         uyanma = Uyanma(this)
         asistan = Asistan(this)
         com.erkam.cezeri.asistan.VakitHatirlatici.planla(this)

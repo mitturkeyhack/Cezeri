@@ -169,6 +169,32 @@ class Uyanma(private val ctx: Context) {
     // ------------------------------------------------------------ Ses kimliği
 
     fun kayitliMi(): Boolean = prefs.getString("merkez", null) != null
+
+    /** "Sadece benim sesime uyan": kapalıysa ses kimliği uyanmayı engellemez */
+    var sadeceSahip: Boolean
+        get() = prefs.getBoolean("sadece_sahip", false)
+        set(v) { prefs.edit().putBoolean("sadece_sahip", v).apply() }
+    private fun kimlikAktif() = sadeceSahip && kayitliMi()
+
+    /** Kullanıcının "Hey Cezerî" deyişinde telefonun duyduğu sözler (öğretme ile kaydedilir) */
+    fun ogrenilenler(): List<String> = prefs.getString("ogrenilen", "").orEmpty().split('|').filter { it.isNotBlank() }
+
+    fun ogret(duyulanlar: List<String>) {
+        val yeni = LinkedHashSet<String>()
+        for (d in duyulanlar) {
+            val t = Turkce.norm(d)
+            if (t.isBlank()) continue
+            val k = t.split(' ').filter { it.isNotBlank() }
+            if (k.joinToString("").length >= 5) yeni.add(k.joinToString(""))
+            // "hey" gibi başlangıç sözü olmadan da tanısın
+            val govde = k.dropWhile { it in setOf("hey", "hay", "ey", "he", "hi", "e", "a", "ay") }.joinToString("")
+            if (govde.length >= 4) yeni.add(govde)
+        }
+        val hepsi = (ogrenilenler() + yeni).filter { it.length >= 3 }.distinct().takeLast(30)
+        prefs.edit().putString("ogrenilen", hepsi.joinToString("|")).apply()
+    }
+
+    fun ogrenileniSil() { prefs.edit().remove("ogrenilen").apply() }
     fun ornekSayisi(): Int = prefs.getInt("ornek", 0)
 
     var hassasiyet: Float
@@ -231,6 +257,7 @@ class Uyanma(private val ctx: Context) {
     }
 
     fun sahibiMi(v: DoubleArray?): Boolean {
+        if (!kimlikAktif()) return true
         val p = sesPuani(v) ?: return true
         return p >= sesEsigi()
     }
@@ -276,7 +303,7 @@ class Uyanma(private val ctx: Context) {
                     if (metin.isBlank()) return
                     _teshis.value = _teshis.value.copy(duyulan = metin, hata = null, zaman = System.currentTimeMillis())
                     // Ses kimliği kaydı yoksa kısmi sonuçta hemen uyan (daha hızlı)
-                    if (!kayitliMi() && uyanmaKelimesiVar(metin)) {
+                    if (!kimlikAktif() && uyanmaKelimesiVar(metin)) {
                         _teshis.value = _teshis.value.copy(kelimePuani = kelimePuani(metin), kelimeEsigi = kelimeEsigi(), karar = "Uyandı")
                         bitti = true; durdur(); uyan?.invoke()
                     }
@@ -293,7 +320,7 @@ class Uyanma(private val ctx: Context) {
                     if (metin.isBlank()) return
                     val kp = kelimePuani(metin)
                     val ke = kelimeEsigi()
-                    val sp = sesPuani(v)
+                    val sp = if (kimlikAktif()) sesPuani(v) else null
                     val se = if (sp == null) null else sesEsigi()
                     val kelimeTamam = uyanmaKelimesiVar(metin)
                     val sesTamam = sahibiMi(v)
@@ -356,7 +383,11 @@ class Uyanma(private val ctx: Context) {
             if (i + 1 < k.size) adaylar.add(k[i] + k[i + 1])
             if (i + 2 < k.size) adaylar.add(k[i] + k[i + 1] + k[i + 2])
         }
-        return adaylar.maxOfOrNull { w -> HEDEFLER.maxOf { h -> Turkce.similarity(w, h) } } ?: 0.0
+        val hedefler = HEDEFLER + ogrenilenler()
+        // Öğretilmiş söyleyişin tamamı birebir duyulduysa tam puan
+        val tum = k.joinToString("")
+        if (ogrenilenler().any { it == tum }) return 1.0
+        return adaylar.maxOfOrNull { w -> hedefler.maxOf { h -> Turkce.similarity(w, h) } } ?: 0.0
     }
 
     fun uyanmaKelimesiVar(metin: String): Boolean {

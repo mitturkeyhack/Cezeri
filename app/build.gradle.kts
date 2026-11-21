@@ -68,9 +68,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.alphacephei:vosk-android:0.3.47@aar")
     implementation("net.java.dev.jna:jna:5.13.0@aar")
-    // Cezerî'nin kendi sesi (Supertonic 3)
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

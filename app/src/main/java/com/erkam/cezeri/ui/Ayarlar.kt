@@ -62,7 +62,6 @@ import com.erkam.cezeri.core.Akil
 import com.erkam.cezeri.core.Olcum
 import kotlinx.coroutines.launch
 import com.erkam.cezeri.core.Ses
-import com.erkam.cezeri.ses.CezeriSesi
 import com.erkam.cezeri.asistan.VakitHatirlatici
 import com.erkam.cezeri.core.Uyanma
 
@@ -146,20 +145,29 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
                 }
             }
 
-            Bolum("SES KİMLİĞİ")
+            Bolum("“HEY CEZERÎ”Yİ ÖĞRET")
             AyarKarti {
+                val ogrenilen = remember(d.kimlikOrnek, d.ekran) { vm.ogrenilenSayisi() }
                 AyarSatiri(
-                    "Sesini tanıma",
-                    if (d.kimlikOrnek > 0) "${d.kimlikOrnek} kayıtla tanınıyor · yalnızca sana cevap verir" else "Kaydedilmedi · herkesin sesine uyanır",
+                    "Söyleyişin",
+                    if (ogrenilen > 0) "Öğrenildi · senin söyleyişine göre uyanır" else "Öğretilmedi · 5 kez söyletip ezberler",
                     Ik.KISI,
+                    tamam = ogrenilen > 0,
                 ) {}
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(
                         Modifier.weight(1f).height(46.dp).clip(RoundedCornerShape(23.dp)).background(Renk.Altin).clickable { vm.sesKaydiBaslat() },
                         contentAlignment = Alignment.Center
-                    ) { Text(if (d.kimlikOrnek > 0) "Yeniden kaydet" else "Sesimi kaydet", style = govde(14.sp, Renk.Zemin, FontWeight.SemiBold)) }
-                    if (d.kimlikOrnek > 0) SadeDugme("Sil", Modifier.weight(0.6f), 46.dp) { vm.kimligiSil() }
+                    ) { Text(if (ogrenilen > 0) "Yeniden öğret" else "Öğret", style = govde(14.sp, Renk.Zemin, FontWeight.SemiBold)) }
+                    if (ogrenilen > 0 || d.kimlikOrnek > 0) SadeDugme("Sil", Modifier.weight(0.6f), 46.dp) { vm.kimligiSil() }
+                }
+                if (d.kimlikOrnek > 0) {
+                    Ayrac()
+                    var sadece by remember { mutableStateOf(vm.sadeceSahip()) }
+                    AyarSatiri("Sadece benim sesime uyan", "İsteğe bağlı · açıkken uyanma biraz zorlaşır", Ik.KISI) {
+                        Anahtar(sadece) { sadece = it; vm.sadeceSahipSec(it) }
+                    }
                 }
             }
 
@@ -545,59 +553,81 @@ private fun HafizaBolumu(vm: Asistan, d: Durum) {
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SesBolumu(vm: Asistan) {
     val motor by vm.sesMotoru.collectAsState()
     val stil by vm.sesStili.collectAsState()
-    val durum by vm.cezeriSesDurumu.collectAsState()
-    val cezeri = motor == Ses.MOTOR_CEZERI
+    val hiz by vm.sesHizi.collectAsState()
+    val tarif by vm.sesTarifi.collectAsState()
+    val hata by vm.sesHatasi.collectAsState()
+    val onbellek by vm.sesOnbellek.collectAsState()
+    val evren = motor == Ses.MOTOR_EVREN
     AyarKarti {
         AyarSatiri(
-            "Cezerî'nin kendi sesi",
-            when (val d = durum) {
-                is CezeriSesi.Durum.Yok -> "Bir kez indirilir · olgun, akıcı erkek sesi"
-                is CezeriSesi.Durum.Iniyor -> if (d.toplam <= 0) "İndirme hazırlanıyor…" else "İndiriliyor · ${d.inen / 1_000_000} / ${d.toplam / 1_000_000} MB"
-                CezeriSesi.Durum.Yukleniyor -> "Hazırlanıyor"
-                CezeriSesi.Durum.Hazir -> if (cezeri) "Kullanılıyor · telefonda üretilir" else "Hazır"
-                is CezeriSesi.Durum.Hata -> d.mesaj
+            "Cezerî'nin sesi",
+            when {
+                !evren -> "Telefonun Türkçe sesi kullanılıyor"
+                hata != null -> hata ?: ""
+                else -> "EVREN · birine dokun, dinle; beğendiğin kalır"
             },
             Ik.HOPARLOR,
-            tamam = cezeri && durum is CezeriSesi.Durum.Hazir,
-        ) { Anahtar(cezeri) { vm.sesMotoruSec(if (it) Ses.MOTOR_CEZERI else Ses.MOTOR_TELEFON) } }
-        val d = durum
-        if (d is CezeriSesi.Durum.Iniyor) {
-            Spacer(Modifier.height(10.dp))
-            val oran = if (d.toplam > 0) (d.inen.toFloat() / d.toplam).coerceIn(0f, 1f) else 0f
-            Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Renk.KartCizgi)) {
-                Box(Modifier.fillMaxWidth(oran).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Renk.Altin))
-            }
-        }
-        if (d is CezeriSesi.Durum.Yok || d is CezeriSesi.Durum.Hata) {
-            Spacer(Modifier.height(12.dp))
-            AltinDugme("Sesi indir", Modifier.fillMaxWidth(), Ik.HOPARLOR) { vm.cezeriSesiIndir() }
-        }
-        if (cezeri && (d is CezeriSesi.Durum.Hazir || d is CezeriSesi.Durum.Yukleniyor)) {
-            Ayrac()
-            Text("SES TONU", style = etiket(Renk.TurkuazAcik))
-            Spacer(Modifier.height(4.dp))
-            Text("Birine dokun, dinle; beğendiğin kalır.", style = govde(12.sp, Renk.Soluk))
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                CezeriSesi.STILLER.forEachIndexed { i, s ->
+        ) { Anahtar(evren) { vm.sesMotoruSec(if (it) Ses.MOTOR_EVREN else Ses.MOTOR_TELEFON) } }
+        if (evren) {
+            Spacer(Modifier.height(14.dp))
+            androidx.compose.foundation.layout.FlowRow(
+                maxItemsInEachRow = 2,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                com.erkam.cezeri.ses.EvrenSes.SESLER.forEach { s ->
                     val secili = s == stil
-                    Box(
-                        Modifier.weight(1f).height(46.dp).clip(RoundedCornerShape(14.dp))
+                    Column(
+                        Modifier.weight(1f).height(60.dp).clip(RoundedCornerShape(16.dp))
                             .background(if (secili) Renk.AltinZemin else Renk.KartKoyu)
-                            .border(1.dp, if (secili) Renk.Altin else Renk.Cizgi, RoundedCornerShape(14.dp))
+                            .border(1.dp, if (secili) Renk.Altin else Renk.Cizgi, RoundedCornerShape(16.dp))
                             .clickable(role = Role.Button) { vm.sesDene(s) }
-                            .semantics { contentDescription = "Ses ${i + 1}" },
-                        contentAlignment = Alignment.Center,
+                            .semantics { contentDescription = "Ses: $s" },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
                     ) {
-                        Text("${i + 1}", style = govde(16.sp, if (secili) Renk.Altin else Renk.SolukAcik, FontWeight.SemiBold))
+                        Text(s.replaceFirstChar { it.titlecase(com.erkam.cezeri.core.Turkce.TR) }, style = govde(15.sp, if (secili) Renk.Altin else Renk.SolukAcik, FontWeight.SemiBold))
+                        Text(if (secili) "seçili" else "dinle", style = govde(11.5.sp, if (secili) Renk.AltinAcik else Renk.Soluk))
                     }
                 }
             }
+            Ayrac()
+            AyarSatiri("Cezerî tarifi", "Olgun, sakin, sıcak bir erkek sesi gibi konuşsun", Ik.KISI) {
+                Anahtar(tarif) { vm.sesTarifiSec(it) }
+            }
         }
+        Ayrac()
+        Text("Konuşma hızı", style = govde(15.sp, Renk.Yazi, FontWeight.SemiBold))
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            listOf(1.0f to "Normal", 1.15f to "1,15×", 1.3f to "1,3×", 1.5f to "1,5×").forEach { (h, ad) ->
+                val secili = kotlin.math.abs(h - hiz) < 0.01f
+                Box(
+                    Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(12.dp))
+                        .background(if (secili) Renk.AltinZemin else Renk.KartKoyu)
+                        .border(1.dp, if (secili) Renk.Altin else Renk.Cizgi, RoundedCornerShape(12.dp))
+                        .clickable(role = Role.RadioButton) { vm.sesHiziSec(h) },
+                    contentAlignment = Alignment.Center,
+                ) { Text(ad, style = govde(13.5.sp, if (secili) Renk.Altin else Renk.SolukAcik, if (secili) FontWeight.SemiBold else FontWeight.Normal)) }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Box(
+            Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(14.dp)).background(Renk.TurkuazZemin)
+                .border(1.dp, Renk.TurkuazCizgi, RoundedCornerShape(14.dp)).clickable { vm.sesDene(stil) },
+            contentAlignment = Alignment.Center,
+        ) { Text("Dinle: “Selâm, ben Cezerî.”", style = govde(15.sp, Renk.TurkuazYazi, FontWeight.Medium)) }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            if (evren) "Sık cümlelerden $onbellek tanesi telefonda hazır, anında çalar. Bağlantı yoksa telefonun Türkçe sesiyle konuşur."
+            else "EVREN sesini açarsan ilk ses yaklaşık 1 saniyede gelir.",
+            style = govde(12.sp, Renk.Soluk)
+        )
     }
 }
 
@@ -694,15 +724,15 @@ fun SesKaydiEkrani(vm: Asistan, e: Ekran.SesKaydi) {
             }
         }
         Spacer(Modifier.height(34.dp))
-        Text("Sesini tanıyayım", style = baslik(34.sp))
+        Text("“Hey Cezerî”yi bana öğret", style = baslik(34.sp))
         Spacer(Modifier.height(10.dp))
-        Text("Böylece yalnızca sen “Hey Cezerî” dediğinde uyanırım. Başkasının sesine cevap vermem.", style = govde(15.sp, Renk.Soluk))
-        Spacer(Modifier.height(38.dp))
+        Text("5 kez, her zamanki gibi söyle. Senin söyleyişini ezberleyip ona göre uyanacağım.", style = govde(15.sp, Renk.Soluk))
+        Spacer(Modifier.height(26.dp))
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(196.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(196.dp).clip(CircleShape).border(1.dp, Renk.Turkuaz.copy(alpha = 0.35f), CircleShape))
+            Box(Modifier.size(156.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(156.dp).clip(CircleShape).border(1.dp, Renk.Turkuaz.copy(alpha = 0.35f), CircleShape))
                 Box(
-                    Modifier.size(176.dp).clip(CircleShape).background(Renk.Amblem).border(1.dp, Renk.AltinIs, CircleShape),
+                    Modifier.size(138.dp).clip(CircleShape).background(Renk.Amblem).border(1.dp, Renk.AltinIs, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     if (e.bitti) Ikon(Ik.TIK, Renk.Turkuaz, 64.dp, 2.4f) else Dalga(0.6f, yukseklik = 60.dp)
@@ -711,7 +741,18 @@ fun SesKaydiEkrani(vm: Asistan, e: Ekran.SesKaydi) {
             Spacer(Modifier.height(26.dp))
             Text(if (e.bitti) "HAZIR" else "ŞİMDİ SÖYLE", style = etiket(Renk.TurkuazAcik))
             Spacer(Modifier.height(8.dp))
-            Text(if (e.bitti) "Seni tanıyorum" else "“Hey Cezerî”", style = baslik(32.sp))
+            Text(if (e.bitti) "Öğrendim" else "“Hey Cezerî”", style = baslik(32.sp))
+        }
+        if (e.duyulanlar.isNotEmpty()) {
+            Spacer(Modifier.height(18.dp))
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Renk.Kart)
+                    .border(1.dp, Renk.KartCizgi, RoundedCornerShape(16.dp)).padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("NE DUYDUM", style = etiket(Renk.TurkuazAcik))
+                e.duyulanlar.forEachIndexed { i, s -> Text("${i + 1}.  “$s”", style = govde(14.sp, Renk.Yazi)) }
+            }
         }
         Spacer(Modifier.height(26.dp))
         Row(
