@@ -13,7 +13,8 @@ import com.erkam.cezeri.core.Not
 import com.erkam.cezeri.core.Komut
 import com.erkam.cezeri.core.KomutCozucu
 import com.erkam.cezeri.core.Kulak
-import com.erkam.cezeri.core.ModelIndirici
+import com.erkam.cezeri.core.Olcum
+import com.erkam.cezeri.core.EvrenMetin
 import com.erkam.cezeri.core.SonIs
 import com.erkam.cezeri.core.Turkce
 import com.erkam.cezeri.core.Uyanma
@@ -24,7 +25,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -53,7 +53,6 @@ data class Durum(
     val dusunuyor: Boolean = false,
     val sohbet: List<SohbetMesaji> = emptyList(),
     val isler: List<SonIs> = emptyList(),
-    val model: ModelIndirici.Durum = ModelIndirici.Durum.Yok,
     val akil: Akil.Durum = Akil.Durum.MODEL_YOK,
     val bekliyor: Boolean = false,
     val uyanmaModel: Uyanma.ModelDurumu = Uyanma.ModelDurumu.Yok,
@@ -61,7 +60,6 @@ data class Durum(
     val kimlikOrnek: Int = 0,
     val derinMod: Boolean = false,
     val aramaHaber: Boolean = true,
-    val derinModel: ModelIndirici.Durum = ModelIndirici.Durum.Yok,
     val uyanmaHassasiyet: Float = 0.5f,
     val notlar: List<Not> = emptyList(),
     val konum: Pair<Double, Double>? = null,
@@ -72,7 +70,6 @@ class Asistan(private val a: CezeriApp) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ses = a.ses
     private val akil = a.akil
-    private val model = a.model
     private val rehber = a.rehber
     private val eylem = a.eylem
     private val hafiza = a.hafiza
@@ -112,12 +109,11 @@ class Asistan(private val a: CezeriApp) {
     private val anaIs = android.os.Handler(android.os.Looper.getMainLooper())
 
     init {
-        akil.araclar = com.erkam.cezeri.core.CezeriAraclari({ rehberBul(it) }) { tur, x, y -> modelEylem(tur, x, y) }
         akil.notlar = { hafiza.notlar().map { it.metin } }
         _durum.update { it.copy(notlar = hafiza.notlar()) }
         scope.launch { a.konum.konum.collect { v -> _durum.update { it.copy(konum = v) } } }
         _durum.update { it.copy(derinMod = derinIstek, aramaHaber = prefs.getBoolean("arama_haber", true)) }
-        if (derinIstek && a.modelDerin.hazirMi()) scope.launch { akil.yukle(a.modelDerin.dosya) }
+        akil.derin = derinIstek
         scope.launch { kulak.dinliyor.collect { v -> _durum.update { it.copy(dinliyor = v) } } }
         scope.launch { kulak.araMetin.collect { v -> _durum.update { it.copy(araMetin = v) } } }
         scope.launch { kulak.seviye.collect { v -> _durum.update { it.copy(seviye = v) } } }
@@ -131,29 +127,14 @@ class Asistan(private val a: CezeriApp) {
                 if (v is Uyanma.ModelDurumu.Hazir && uyanma.acik && a.onPlanda) UyanikServis.baslat(a)
             }
         }
-        scope.launch {
-            model.durum.collect { v ->
-                _durum.update { it.copy(model = v) }
-                if (v is ModelIndirici.Durum.Hazir && akil.durum.value == Akil.Durum.MODEL_YOK && !derinIstek) {
-                    launch { akil.yukle(model.dosya) }
-                }
-            }
-        }
-        scope.launch {
-            a.modelDerin.durum.collect { v ->
-                _durum.update { it.copy(derinModel = v) }
-                if (v is ModelIndirici.Durum.Hazir && derinIstek && akil.aktifModel != a.modelDerin.dosya) {
-                    launch { akil.yukle(a.modelDerin.dosya) }
-                }
-            }
-        }
+        // Açılışta EVREN bağlantısını sessizce dene (model listesini de tazeler)
+        if (akil.anahtar().isNotBlank()) scope.launch { akil.dene() }
     }
 
     // ---------------------------------------------------------------- Kurulum
 
     fun kurulumAdim(adim: Int) {
         _durum.update { it.copy(ekran = Ekran.Kurulum(adim)) }
-        if (adim == 2) model.baslat()
     }
 
     fun karsila() = ses.konus("Selâm, ben Cezerî. Senin için arar, mesaj yazar, vakitleri hatırlatır ve sorularını cevaplarım.")
@@ -164,7 +145,12 @@ class Asistan(private val a: CezeriApp) {
         ses.konus("Her şey hazır. Mikrofona dokunup benimle konuşabilirsin.")
     }
 
-    fun modeliIndir() = model.baslat()
+    // EVREN
+    val evren get() = akil
+    fun evrenAnahtar(a: String) { akil.anahtarKaydet(a); scope.launch { akil.dene() } }
+    fun evrenDene() = scope.launch { akil.dene() }
+    fun hizliModelSec(m: String) = akil.hizliSec(m)
+    fun derinModelSec(m: String) = akil.derinSec(m)
 
     fun konusKisa(metin: String) = ses.konus(metin)
 
@@ -226,6 +212,7 @@ class Asistan(private val a: CezeriApp) {
 
     /** Sessiz modda cevaplar sohbete yazılır. */
     private fun yaziyaEkle(metin: String) {
+        Olcum.ilkCikti()
         _durum.update {
             val ekran = if (it.ekran is Ekran.Ana) Ekran.Sohbet else it.ekran
             it.copy(ekran = ekran, sohbet = it.sohbet + SohbetMesaji(false, metin))
@@ -242,7 +229,7 @@ class Asistan(private val a: CezeriApp) {
     private fun cevapGoster(soru: String, cevap: String, sonra: (() -> Unit)? = null) {
         kullaniciSatiri(soru)
         _durum.update { it.copy(ekran = Ekran.Sohbet, sohbet = it.sohbet + SohbetMesaji(false, cevap)) }
-        if (sesliMi()) ses.konus(cevap, bitince = sonra) else sonra?.invoke()
+        if (sesliMi()) ses.konus(cevap, bitince = sonra) else { Olcum.ilkCikti(); sonra?.invoke() }
     }
 
     /** İş bitince dönülecek ekran: sesle çalışırken ana ekran, yazarken sohbet. */
@@ -254,6 +241,7 @@ class Asistan(private val a: CezeriApp) {
     private fun duydu(s: Kulak.Sonuc) {
         when (s) {
             is Kulak.Sonuc.Metin -> {
+                Olcum.sonucGeldi()
                 buTurYazili = false
                 _durum.update { it.copy(duyulan = s.en) }
                 val b = bekleyen
@@ -282,6 +270,7 @@ class Asistan(private val a: CezeriApp) {
     fun yazdi(metin: String) {
         if (metin.isBlank()) return
         ses.sus(); kulak.birak()
+        Olcum.yazildi()
         sesli = false
         buTurYazili = false
         val ekran = _durum.value.ekran
@@ -740,23 +729,10 @@ class Asistan(private val a: CezeriApp) {
 
     fun derinSec(ac: Boolean) {
         if (ac == derinIstek) return
-        val derin = a.modelDerin
-        if (ac && !derin.hazirMi()) {
-            derin.baslat()
-            derinIstek = true
-            prefs.edit().putBoolean("derin", true).apply()
-            _durum.update { it.copy(derinMod = true) }
-            soyle("Derin Düşün için daha güçlü aklı indiriyorum. Yaklaşık 3,7 GB; inince kendiliğinden geçerim. O zamana kadar hızlı akılla devam ediyorum.")
-            return
-        }
         derinIstek = ac
+        akil.derin = ac
         prefs.edit().putBoolean("derin", ac).apply()
         _durum.update { it.copy(derinMod = ac) }
-        val hedef = if (ac) derin.dosya else model.dosya
-        if (hedef.exists()) {
-            soyle(if (ac) "Derin düşünmeye geçiyorum, bir dakika sürebilir." else "Hızlı moda geçiyorum.")
-            scope.launch { akil.yukle(hedef) }
-        }
     }
 
     // ---------------------------------------------------------------- Ayarlar ve Aşama 2
@@ -849,18 +825,9 @@ class Asistan(private val a: CezeriApp) {
         kullaniciSatiri(metin)
         _durum.update { it.copy(ekran = Ekran.Sohbet) }
         modelEylemi = false
-        when (akil.durum.value) {
-            Akil.Durum.HAZIR -> Unit
-            Akil.Durum.YUKLENIYOR -> { cevapEkle("Bir saniye, aklımı topluyorum. Birazdan tekrar sorar mısın?"); return }
-            Akil.Durum.HATA -> { cevapEkle("Aklımı yüklerken bir sorun oldu. Uygulamayı kapatıp yeniden açar mısın?"); return }
-            Akil.Durum.MODEL_YOK -> {
-                val m = model.durum.value
-                cevapEkle(
-                    if (m is ModelIndirici.Durum.Iniyor) "Aklım hâlâ hazırlanıyor, indirme yüzde ${(m.inen * 100 / maxOf(1, m.toplam))}'de. Bu arada arama, mesaj ve alarm gibi işleri yapabilirim."
-                    else "Sohbet edebilmem için önce aklımı indirmem gerekiyor. Ayarlardan indirmeyi başlatabilirsin."
-                )
-                return
-            }
+        if (akil.durum.value == Akil.Durum.MODEL_YOK) {
+            cevapEkle("Sohbet edebilmem için EVREN anahtarı gerekiyor. Ayarlar'daki Akıl bölümünden ekleyebilirsin. Arama, mesaj, vakit gibi işleri yine yaparım.")
+            return
         }
         _durum.update { it.copy(dusunuyor = true, sohbet = it.sohbet + SohbetMesaji(false, "", bitti = false)) }
         sohbetIsi = scope.launch {
@@ -868,54 +835,80 @@ class Asistan(private val a: CezeriApp) {
             val tum = StringBuilder()
             var ilk = true
             try {
+                Olcum.istek()
                 akil.sor(metin)
-                    .catch { e -> throw e }
                     .collect { parca ->
                         if (modelEylemi) return@collect
+                        Olcum.ilkKelime()
                         tum.append(parca)
+                        // Cevap bir iş etiketiyle başlıyorsa ([[ARA: …]]) gösterme; etiket tamamlanınca işi başlat
+                        val bas = tum.trimStart()
+                        if (bas.startsWith("[")) {
+                            if (bas.length < 2 || bas.startsWith("[[")) {
+                                val e = EvrenMetin.etiket(bas.toString())
+                                if (e != null) { modelEylemi = true; etiketIsle(e, metin) }
+                                return@collect
+                            }
+                        }
                         tampon.append(parca)
                         sonMesajiGuncelle(temizMetin(tum.toString()), bitti = false)
-                        if (ilk) { _durum.update { it.copy(dusunuyor = false) }; ilk = false }
+                        if (ilk) { _durum.update { it.copy(dusunuyor = false) }; ilk = false; if (!sesliMi()) Olcum.ilkCikti() }
                         cumleleriSoyle(tampon, son = false)
                     }
+                if (!modelEylemi && tum.trimStart().startsWith("[[")) {
+                    // Etiket kapanmadan bittiyse yine de yorumla
+                    EvrenMetin.etiket(tum.toString() + "]]")?.let { modelEylemi = true; etiketIsle(it, metin) }
+                }
                 if (modelEylemi) {
-                    // Model bir iş başlattı (arama/mesaj/alarm): akışı uygulama devraldı, model cümlesini gösterme
-                    _durum.update { d -> d.copy(sohbet = d.sohbet.toMutableList().also { l -> if (l.isNotEmpty() && !l.last().benden) l.removeAt(l.lastIndex) }) }
+                    // İşi uygulama devraldı (etiketIsle); model cümlesi gösterilmez
                     akil.turuKaydet(metin, "(İstek uygulamaya iletildi.)")
                     return@launch
                 }
                 cumleleriSoyle(tampon, son = true)
                 var cevap = temizMetin(tum.toString())
-                // Cümle yarıda kaldıysa (bağlam doldu) sohbeti tazeleyip bir kez yeniden sor
-                if (!tekrarDenendi && cevap.isNotBlank() && !Regex("[.!?…)\"”]$").containsMatchIn(cevap)) {
-                    tekrarDenendi = true
-                    akil.tazele()
-                    val ek = StringBuilder()
-                    akil.sor("Son cevabın yarıda kesildi. Aynı soruya kısa ve tam bir cevap ver: $metin").collect { p ->
-                        ek.append(p)
-                        sonMesajiGuncelle(temizMetin(ek.toString()), bitti = false)
-                    }
-                    if (ek.isNotBlank()) {
-                        cevap = temizMetin(ek.toString())
-                        ses.sus(); if (sesliMi()) ses.konus(cevap)
-                    }
+                if (cevap.isBlank()) {
+                    cevap = "Bir cevap gelmedi, bir daha sorar mısın?"
+                    if (sesliMi()) ses.konus(cevap)
                 }
-                tekrarDenendi = false
                 akil.turuKaydet(metin, cevap)
                 sonMesajiGuncelle(cevap, bitti = true)
             } catch (e: kotlinx.coroutines.CancellationException) {
-                sonMesajiGuncelle(temizMetin(tum.toString()), bitti = true)
+                if (!modelEylemi) sonMesajiGuncelle(temizMetin(tum.toString()), bitti = true)
                 throw e
             } catch (e: Throwable) {
-                sonMesajiGuncelle(if (tum.isBlank()) "Bir sorun oldu, bir daha dener misin?" else temizMetin(tum.toString()), bitti = true)
-                if (tum.isBlank()) soyle("Bir sorun oldu, bir daha dener misin?")
+                val neden = (e as? Akil.EvrenHatasi)?.kullaniciya ?: "Bir sorun oldu, bir daha dener misin?"
+                val komutlar = " Arama, mesaj, vakit ve alarm gibi işleri yine yapabilirim."
+                val c = if (e is Akil.EvrenHatasi && neden.contains("ulaşamadım")) "Şu an internete ulaşamıyorum.$komutlar" else neden
+                sonMesajiGuncelle(if (tum.isBlank()) c else temizMetin(tum.toString()), bitti = true)
+                if (tum.isBlank() && sesliMi()) ses.konus(c)
             } finally {
                 _durum.update { it.copy(dusunuyor = false) }
             }
         }
     }
 
-    private var tekrarDenendi = false
+    /** Modelin verdiği iş etiketi ([[ARA: …]], [[VAKIT]] …): işi uygulama telefonda yapar. */
+    private fun etiketIsle(e: Triple<String, String, String>, metin: String) {
+        val (tur, x, y) = e
+        anaIs.post {
+            // Model cümlesini gösterme: akışı uygulama devraldı
+            _durum.update { d -> d.copy(dusunuyor = false, sohbet = d.sohbet.toMutableList().also { l -> if (l.isNotEmpty() && !l.last().benden) l.removeAt(l.lastIndex) }) }
+            buTurYazili = true
+            when (tur) {
+                "ARA" -> modelEylem("ara", x, "")
+                "MESAJ" -> modelEylem("mesaj", x, y)
+                "ALARM" -> modelEylem("alarm", x, "")
+                "HATIRLA" -> if (x.isNotBlank()) {
+                    val b = x.trim().replaceFirstChar { it.titlecase(Turkce.TR) }
+                    hafiza.notEkle(b); notlariYenile()
+                    cevapGoster(metin, "Tamam, aklımda tutuyorum: $b")
+                }
+                "VAKIT" -> vakitCevapla(KomutCozucu.coz(metin) as? Komut.Vakit ?: Komut.Vakit(null), metin)
+                "REHBER" -> rehberCevapla(Komut.RehberSor(x.ifBlank { metin }, Regex("numara").containsMatchIn(Turkce.lower(metin))), metin)
+                else -> cevapGoster(metin, "Bunu tam anlayamadım, bir daha söyler misin?")
+            }
+        }
+    }
 
     private fun cumleleriSoyle(tampon: StringBuilder, son: Boolean) {
         while (true) {
@@ -952,13 +945,13 @@ class Asistan(private val a: CezeriApp) {
     fun yeniSohbet() {
         sohbetIsi?.cancel(); ses.sus()
         _durum.update { it.copy(sohbet = emptyList()) }
-        scope.launch { if (akil.durum.value == Akil.Durum.HAZIR) akil.yeniSohbet() }
+        akil.yeniSohbet()
     }
 
 
     // ---------------------------------------------------------------- Modelin başlattığı işler
 
-    /** Gemma bir araç çağırınca (arka iş parçacığından) gelir. */
+    /** Model bir iş etiketi verince gelir. */
     private fun modelEylem(tur: String, x: String, y: String): String {
         return when (tur) {
             "ara" -> {
@@ -1090,7 +1083,7 @@ class Asistan(private val a: CezeriApp) {
 
     private fun notlariYenile() {
         _durum.update { it.copy(notlar = hafiza.notlar()) }
-        scope.launch { if (akil.durum.value == Akil.Durum.HAZIR) akil.tazele() }
+
     }
 
     fun notSil(id: Long) { hafiza.notSil(id); notlariYenile() }

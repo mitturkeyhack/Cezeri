@@ -57,7 +57,6 @@ import com.erkam.cezeri.Ekran
 import com.erkam.cezeri.core.Akil
 import com.erkam.cezeri.core.Kanal
 import com.erkam.cezeri.core.Kisi
-import com.erkam.cezeri.core.ModelIndirici
 import com.erkam.cezeri.core.SonIs
 import com.erkam.cezeri.core.Turkce
 import java.util.Calendar
@@ -181,13 +180,9 @@ private fun durumRengi(d: Durum): Color = when (d.akil) {
 private fun durumYazisi(d: Durum): String = when {
     d.akil == Akil.Durum.HAZIR && d.uyanmaAcik && d.uyanmaModel is com.erkam.cezeri.core.Uyanma.ModelDurumu.Hazir -> "“Hey Cezerî” dediğinde uyanır"
     d.akil == Akil.Durum.HAZIR -> "Mikrofona dokun ve konuş"
-    d.akil == Akil.Durum.YUKLENIYOR -> "Aklını topluyor…"
-    d.model is ModelIndirici.Durum.Iniyor -> {
-        val m = d.model
-        "Hazırlanıyor · %" + (m.inen * 100 / maxOf(1L, m.toplam))
-    }
-    d.akil == Akil.Durum.HATA -> "Akıl yüklenemedi · Komutlar çalışıyor"
-    else -> "Komutlara hazır"
+    d.akil == Akil.Durum.YUKLENIYOR -> "Bağlanıyor…"
+    d.akil == Akil.Durum.HATA -> "EVREN'e ulaşılamadı · Komutlar çalışıyor"
+    else -> "Sohbet için Ayarlar'dan EVREN anahtarını ekle"
 }
 
 @Composable
@@ -217,13 +212,13 @@ private fun BilgiPenceresi(vm: Asistan, d: Durum, kapat: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Akıl: " + when (d.akil) {
-                    Akil.Durum.HAZIR -> "hazır (${vm.arkaUc()})"
-                    Akil.Durum.YUKLENIYOR -> "yükleniyor"
-                    Akil.Durum.HATA -> "yüklenemedi"
-                    Akil.Durum.MODEL_YOK -> "henüz inmedi"
+                    Akil.Durum.HAZIR -> "EVREN · ${vm.arkaUc()}"
+                    Akil.Durum.YUKLENIYOR -> "bağlanıyor"
+                    Akil.Durum.HATA -> "EVREN'e ulaşılamadı"
+                    Akil.Durum.MODEL_YOK -> "EVREN anahtarı girilmedi"
                 }, style = govde(14.sp))
                 Text("Ses: " + (vm.sesAdi() ?: "telefonun Türkçe sesi"), style = govde(14.sp))
-                Text("Sürüm: Aşama 1", style = govde(14.sp, Renk.Soluk))
+                Text("Sürüm: Aşama 5 · EVREN", style = govde(14.sp, Renk.Soluk))
             }
         },
         confirmButton = { TextButton(onClick = kapat) { Text("Tamam", style = govde(14.sp, Renk.Altin, FontWeight.SemiBold)) } },
@@ -476,10 +471,7 @@ fun SohbetEkrani(vm: Asistan, d: Durum) {
             Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Renk.Kart).border(1.dp, Renk.KartCizgi, RoundedCornerShape(16.dp)).padding(4.dp)
         ) {
             val derin = d.derinMod
-            val derinYazi = when (val m = d.derinModel) {
-                is ModelIndirici.Durum.Iniyor -> "Derin düşün · %" + (m.inen * 100 / maxOf(1L, m.toplam))
-                else -> "Derin düşün"
-            }
+            val derinYazi = "Derin düşün"
             Box(
                 Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(12.dp)).background(if (!derin) Renk.KartCizgi else Color.Transparent)
                     .clickable(role = Role.RadioButton) { vm.derinSec(false) },

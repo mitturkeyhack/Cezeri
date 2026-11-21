@@ -282,3 +282,35 @@ class AnlamaSinavi {
         assertNull(NotEsle.enIyi(notlar, "hava nasıl"))
     }
 }
+
+class EvrenSinavi {
+    @Test fun akisParcalari() {
+        assertEquals("Mer", com.erkam.cezeri.core.EvrenMetin.sseParcasi("""data: {"choices":[{"delta":{"content":"Mer"}}]}"""))
+        assertEquals(com.erkam.cezeri.core.EvrenMetin.BITTI, com.erkam.cezeri.core.EvrenMetin.sseParcasi("data: [DONE]"))
+        assertNull(com.erkam.cezeri.core.EvrenMetin.sseParcasi(": keep-alive"))
+        assertNull(com.erkam.cezeri.core.EvrenMetin.sseParcasi("""data: {"choices":[{"delta":{"role":"assistant"}}]}"""))
+    }
+
+    @Test fun dusunceAyiklama() {
+        val s = com.erkam.cezeri.core.EvrenMetin.DusunceSuzgeci()
+        val cikti = listOf("<thi", "nk>uzun düşü", "nce</th", "ink>Merhaba", " dünya.").joinToString("") { s.ekle(it) } + s.bitir()
+        assertEquals("Merhaba dünya.", cikti)
+        assertEquals("Selam", com.erkam.cezeri.core.EvrenMetin.temizle("<think>x</think>Selam"))
+        assertEquals("a < b ise", com.erkam.cezeri.core.EvrenMetin.temizle("a < b ise"))
+    }
+
+    @Test fun etiketler() {
+        assertEquals(Triple("ARA", "Ablam", ""), com.erkam.cezeri.core.EvrenMetin.etiket("[[ARA: Ablam]]"))
+        assertEquals(Triple("MESAJ", "Ahmet", "geliyorum"), com.erkam.cezeri.core.EvrenMetin.etiket("[[MESAJ: Ahmet | geliyorum]]"))
+        assertEquals(Triple("VAKIT", "", ""), com.erkam.cezeri.core.EvrenMetin.etiket("[[VAKIT]]"))
+        assertEquals("HATIRLA", com.erkam.cezeri.core.EvrenMetin.etiket(" [[HATIRLA: annemin doğum günü 3 Mart]]")?.first)
+        assertNull(com.erkam.cezeri.core.EvrenMetin.etiket("Merhaba [[ARA: x]]"))
+    }
+
+    @Test fun modelListesi() {
+        val l = com.erkam.cezeri.core.EvrenMetin.modelleriAyikla("""{"data":[{"id":"gemma-4-31b"},{"id":"qwen3.8-flash-next"},{"id":"auto"}]}""")
+        assertEquals(listOf("gemma-4-31b", "qwen3.8-flash-next", "auto"), l)
+        assertEquals("qwen3.8-flash-next", com.erkam.cezeri.core.EvrenMetin.hizliSec(l))
+        assertEquals("gemma-4-31b", com.erkam.cezeri.core.EvrenMetin.derinSec(l))
+    }
+}

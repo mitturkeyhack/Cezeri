@@ -34,6 +34,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,7 +53,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.erkam.cezeri.Asistan
 import com.erkam.cezeri.Durum
-import com.erkam.cezeri.core.ModelIndirici
+import com.erkam.cezeri.core.Akil
 
 @Composable
 fun KurulumHosgeldin(vm: Asistan) {
@@ -199,58 +201,116 @@ private val Color1D = androidx.compose.ui.graphics.Color(0xFF1D222B)
 
 @Composable
 fun KurulumHazirlik(vm: Asistan, d: Durum) {
-    val m = d.model
-    val oran = when (m) {
-        is ModelIndirici.Durum.Iniyor -> m.inen.toFloat() / maxOf(1L, m.toplam).toFloat()
-        ModelIndirici.Durum.Hazir -> 1f
-        else -> 0f
-    }
+    val akil = vm.evren
+    val test by akil.sonTest.collectAsState()
+    var anahtar by remember { androidx.compose.runtime.mutableStateOf(akil.anahtar()) }
+    var deniyor by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val pano = androidx.compose.ui.platform.LocalClipboardManager.current
+    val kapsam = androidx.compose.runtime.rememberCoroutineScope()
+    val basarili = test?.basarili == true && anahtar.isNotBlank()
     Column(
-        Modifier.fillMaxSize().background(Renk.Zemin).statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        Modifier.fillMaxSize().background(Renk.Zemin).statusBarsPadding().navigationBarsPadding()
+            .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
     ) {
-        Halka(oran, 150.dp) {
-            Text("%" + (oran * 100).toInt(), style = baslik(30.sp).copy(fontWeight = FontWeight.Bold))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.width(28.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Renk.AltinKoyu))
+            Box(Modifier.width(28.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Renk.AltinKoyu))
+            Box(Modifier.width(44.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Renk.Altin))
+            Spacer(Modifier.weight(1f))
+            Text("3 / 3", style = govde(12.sp, Renk.Soluk))
         }
-        Spacer(Modifier.height(22.dp))
-        Text(if (m == ModelIndirici.Durum.Hazir) "Cezerî hazır" else "Cezerî hazırlanıyor", style = baslik(32.sp), textAlign = TextAlign.Center)
-        Spacer(Modifier.height(8.dp))
-        Text("Tek seferlik indirme · Wi‑Fi önerilir", style = govde(14.sp, Renk.Soluk))
+        Spacer(Modifier.height(36.dp))
+        Box(
+            Modifier.size(72.dp).clip(CircleShape).background(Renk.AltinZemin).border(1.5.dp, Renk.AltinCizgi, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { KucukAmblem(40.dp) }
         Spacer(Modifier.height(24.dp))
-        Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Renk.KartKoyu)
-                .border(1.dp, Renk.KartCizgi, RoundedCornerShape(20.dp)).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(Modifier.fillMaxWidth()) {
-                Text("Akıl", style = govde(14.sp, Renk.Yazi, FontWeight.SemiBold), modifier = Modifier.weight(1f))
-                val gb = { b: Long -> "%.1f".format(b / 1_000_000_000.0).replace('.', ',') }
-                Text(
-                    when (m) {
-                        is ModelIndirici.Durum.Iniyor -> "${gb(m.inen)} / ${gb(m.toplam)} GB"
-                        ModelIndirici.Durum.Hazir -> "Tamam"
-                        is ModelIndirici.Durum.Hata -> "Hata"
-                        else -> "2,7 GB"
-                    },
-                    style = govde(12.sp, Renk.Altin)
-                )
-            }
-            Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Renk.KartCizgi)) {
-                Box(Modifier.fillMaxWidth(oran).height(6.dp).clip(RoundedCornerShape(3.dp)).background(Renk.Altin))
-            }
-            if (m is ModelIndirici.Durum.Hata) {
-                Text(m.mesaj, style = govde(12.sp, Renk.SolukAcik))
-                Text("Tekrar dene", style = govde(13.sp, Renk.Altin, FontWeight.SemiBold), modifier = Modifier.clickable { vm.modeliIndir() }.padding(vertical = 6.dp))
-            }
-        }
+        Text("Cezerî'nin aklı EVREN'de", style = baslik(36.sp))
         Spacer(Modifier.height(12.dp))
         Text(
-            "Arama, mesaj, alarm gibi işler hemen çalışır. Sohbet için aklın inmesini beklemen yeterli; indirme arka planda devam eder.",
-            style = govde(13.sp, Renk.Soluk), textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp)
+            "Düşünme işi artık sunucuda yapılıyor; cevaplar çok daha hızlı gelir. Rehberin, numaraların ve mesajların telefonundan çıkmaz.",
+            style = govde(15.sp, Renk.SolukAcik)
         )
+        Spacer(Modifier.height(30.dp))
+        Text("EVREN API ANAHTARI", style = etiket(Renk.TurkuazAcik))
+        Spacer(Modifier.height(10.dp))
+        Row(
+            Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(16.dp)).background(Renk.Kart)
+                .border(1.dp, Renk.AltinCizgi, RoundedCornerShape(16.dp)).padding(start = 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.compose.foundation.text.BasicTextField(
+                value = anahtar,
+                onValueChange = { anahtar = it.trim() },
+                singleLine = true,
+                textStyle = govde(15.sp, Renk.Yazi),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(Renk.Altin),
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.weight(1f),
+                decorationBox = { ic ->
+                    if (anahtar.isEmpty()) Text("Anahtarı buraya yapıştır", style = govde(15.sp, Renk.Soluk))
+                    ic()
+                },
+            )
+            Box(
+                Modifier.height(38.dp).clip(RoundedCornerShape(11.dp)).background(Renk.KartKoyu)
+                    .border(1.dp, Renk.Cizgi, RoundedCornerShape(11.dp))
+                    .clickable { pano.getText()?.text?.trim()?.let { if (it.isNotBlank()) anahtar = it } }
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text("Yapıştır", style = govde(13.sp, Renk.Altin, FontWeight.Medium)) }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("Anahtarı EVREN panelinden (e-Devlet ile giriş) alırsın. Sadece bu telefonda saklanır.", style = govde(12.5.sp, Renk.Soluk))
+        val t = test
+        if (deniyor || t != null) {
+            Spacer(Modifier.height(20.dp))
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                    .background(if (deniyor || t?.basarili == true) Renk.TurkuazZemin else Renk.AltinZemin)
+                    .border(1.dp, if (deniyor || t?.basarili == true) Renk.TurkuazCizgi else Renk.AltinCizgi, RoundedCornerShape(18.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                when {
+                    deniyor -> Text("Bağlanıyor…", style = govde(14.sp, Renk.TurkuazYazi))
+                    t != null && t.basarili -> {
+                        TestSatiri("Bağlantı kuruldu", "${t.ms} ms")
+                        TestSatiri("Kullanım şartları kabul edildi", null)
+                        TestSatiri("Model hazır · ${akil.hizliModel.value}", null)
+                    }
+                    t != null -> Text(t.mesaj, style = govde(14.sp, Renk.AltinAcik))
+                }
+            }
+        }
+        Spacer(Modifier.height(28.dp))
         Spacer(Modifier.weight(1f))
-        AltinDugme(if (m == ModelIndirici.Durum.Hazir) "Başla" else "Devam et") { vm.kurulumBitir() }
-        Spacer(Modifier.height(12.dp))
-        Text("İndirme arka planda devam eder", style = govde(12.sp, Renk.Soluk))
+        if (basarili && !deniyor) {
+            AltinDugme("Başla", Modifier.fillMaxWidth()) { vm.kurulumBitir() }
+        } else {
+            AltinDugme(if (deniyor) "Bağlanıyor…" else "Bağlan ve dene", Modifier.fillMaxWidth()) {
+                if (anahtar.isBlank() || deniyor) return@AltinDugme
+                deniyor = true
+                akil.anahtarKaydet(anahtar)
+                kapsam.launch { akil.dene(); deniyor = false }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            if (basarili) "Model indirmek yok · Cezerî hemen hazır" else "Şimdilik geç",
+            style = govde(13.sp, if (basarili) Renk.Soluk else Renk.Altin, if (basarili) FontWeight.Normal else FontWeight.Medium),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().then(if (basarili) Modifier else Modifier.clickable { vm.kurulumBitir() }).padding(vertical = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun TestSatiri(yazi: String, sag: String?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Ikon(Ik.TIK, Renk.Turkuaz, 18.dp, 2f)
+        Spacer(Modifier.width(10.dp))
+        Text(yazi, style = govde(14.sp, Renk.TurkuazYazi), modifier = Modifier.weight(1f))
+        if (sag != null) Text(sag, style = govde(13.sp, Renk.TurkuazAcik))
     }
 }

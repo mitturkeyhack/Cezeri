@@ -5,7 +5,6 @@ import com.erkam.cezeri.core.Akil
 import com.erkam.cezeri.core.Eylem
 import com.erkam.cezeri.core.Hafiza
 import com.erkam.cezeri.core.Konum
-import com.erkam.cezeri.core.ModelIndirici
 import com.erkam.cezeri.core.Rehber
 import com.erkam.cezeri.core.Ses
 import com.erkam.cezeri.core.Uyanma
@@ -13,8 +12,6 @@ import com.erkam.cezeri.core.Uyanma
 class CezeriApp : Application() {
     lateinit var ses: Ses; private set
     lateinit var akil: Akil; private set
-    lateinit var model: ModelIndirici; private set
-    lateinit var modelDerin: ModelIndirici; private set
     lateinit var rehber: Rehber; private set
     lateinit var eylem: Eylem; private set
     lateinit var hafiza: Hafiza; private set
@@ -27,16 +24,12 @@ class CezeriApp : Application() {
         super.onCreate()
         ses = Ses(this)
         akil = Akil(this)
-        model = ModelIndirici.hizli(this)
-        modelDerin = ModelIndirici.derin(this)
         rehber = Rehber(this)
         eylem = Eylem(this)
         hafiza = Hafiza(this)
         konum = Konum(this)
-        model.devamEt()
-        modelDerin.devamEt()
-        // Cezerî'nin kendi sesi: ana model hazırsa ve henüz inmediyse kendiliğinden indir (kaldığı yerden devam eder).
-        if (ses.motor.value == Ses.MOTOR_CEZERI && !ses.cezeri.tamamMi() && model.hazirMi()) ses.sesIndir()
+        // Eski sürümden kalan telefon içi akıl dosyalarını (Gemma, ~2,7–3,7 GB) sil: artık akıl EVREN'de
+        Thread { runCatching { java.io.File(getExternalFilesDir(null), "models").deleteRecursively() } }.start()
         uyanma = Uyanma(this)
         asistan = Asistan(this)
         com.erkam.cezeri.asistan.VakitHatirlatici.planla(this)

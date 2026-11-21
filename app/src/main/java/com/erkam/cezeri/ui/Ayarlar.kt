@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,6 +59,8 @@ import com.erkam.cezeri.Asistan
 import com.erkam.cezeri.Durum
 import com.erkam.cezeri.Ekran
 import com.erkam.cezeri.core.Akil
+import com.erkam.cezeri.core.Olcum
+import kotlinx.coroutines.launch
 import com.erkam.cezeri.core.Ses
 import com.erkam.cezeri.ses.CezeriSesi
 import com.erkam.cezeri.asistan.VakitHatirlatici
@@ -238,24 +241,18 @@ fun AyarlarEkrani(vm: Asistan, d: Durum) {
             Bolum("HAFIZA")
             HafizaBolumu(vm, d)
 
-            Bolum("AKIL")
+            Bolum("AKIL · EVREN")
+            EvrenBolumu(vm)
+
+            Bolum("HIZ ÖLÇER")
+            HizOlcer()
+
+            Bolum("İZİNLER")
             AyarKarti {
-                AyarSatiri(
-                    "Gemma 4 E2B",
-                    when (d.akil) {
-                        Akil.Durum.HAZIR -> "Hazır · ${vm.arkaUc()} ile çalışıyor"
-                        Akil.Durum.YUKLENIYOR -> "Yükleniyor"
-                        Akil.Durum.HATA -> "Yüklenemedi"
-                        Akil.Durum.MODEL_YOK -> "Henüz inmedi"
-                    },
-                    Ik.BILGI,
-                    tamam = d.akil == Akil.Durum.HAZIR,
-                ) {}
-                Ayrac()
-                AyarSatiri("İzinler", "Mikrofon, rehber, telefon, SMS", Ik.AYAR, tikla = { vm.kurulumAdim(1) }) {}
+                AyarSatiri("İzinler", "Mikrofon, rehber, telefon, SMS, konum", Ik.AYAR, tikla = { vm.kurulumAdim(1) }) {}
             }
             Spacer(Modifier.height(8.dp))
-            Text("Cezerî · Aşama 4", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            Text("Cezerî · Aşama 5 · EVREN", style = govde(12.sp, Renk.Soluk), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         }
     }
 }
@@ -305,6 +302,161 @@ private fun UyanmaTesti(vm: Asistan) {
         if (t.karar.isNotBlank()) Text("Sonuç: ${t.karar}", style = govde(13.sp, Renk.Altin, FontWeight.SemiBold))
         t.hata?.let { Text(it, style = govde(12.sp, Renk.Kirmizi)) }
     }
+}
+
+@Composable
+private fun EvrenBolumu(vm: Asistan) {
+    val akil = vm.evren
+    val durum by akil.durum.collectAsState()
+    val test by akil.sonTest.collectAsState()
+    val modeller by akil.modeller.collectAsState()
+    val hizli by akil.hizliModel.collectAsState()
+    val derin by akil.derinModel.collectAsState()
+    var anahtarAcik by remember { mutableStateOf(akil.anahtar().isBlank()) }
+    var yeni by remember { mutableStateOf("") }
+    var deniyor by remember { mutableStateOf(false) }
+    val kapsam = rememberCoroutineScope()
+    val pano = androidx.compose.ui.platform.LocalClipboardManager.current
+    fun dene() { deniyor = true; kapsam.launch { akil.dene(); deniyor = false } }
+    AyarKarti {
+        AyarSatiri(
+            "Bağlantı",
+            when {
+                deniyor -> "Deneniyor…"
+                durum == Akil.Durum.MODEL_YOK -> "Anahtar girilmedi"
+                test?.basarili == true -> "Bağlı · son deneme ${test?.ms} ms"
+                test != null -> test?.mesaj ?: ""
+                else -> "Anahtar kayıtlı"
+            },
+            Ik.BILGI,
+            tamam = test?.basarili == true,
+        ) {}
+        Ayrac()
+        AyarSatiri(
+            "API anahtarı",
+            if (akil.anahtar().isBlank()) "Girilmedi" else "•••• •••• ${akil.anahtarSonu()}",
+            Ik.AYAR,
+        ) {
+            Box(
+                Modifier.height(36.dp).clip(RoundedCornerShape(11.dp)).background(Renk.AltinZemin)
+                    .border(1.dp, Renk.AltinCizgi, RoundedCornerShape(11.dp)).clickable { anahtarAcik = !anahtarAcik }
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text(if (anahtarAcik) "Kapat" else "Değiştir", style = govde(13.sp, Renk.Altin, FontWeight.Medium)) }
+        }
+        if (anahtarAcik) {
+            Spacer(Modifier.height(12.dp))
+            Row(
+                Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(14.dp)).background(Renk.KartKoyu)
+                    .border(1.dp, Renk.AltinCizgi, RoundedCornerShape(14.dp)).padding(start = 14.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.foundation.text.BasicTextField(
+                    value = yeni, onValueChange = { yeni = it.trim() }, singleLine = true,
+                    textStyle = govde(14.sp, Renk.Yazi),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Renk.Altin),
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    modifier = Modifier.weight(1f),
+                    decorationBox = { ic -> if (yeni.isEmpty()) Text("Yeni anahtar", style = govde(14.sp, Renk.Soluk)); ic() },
+                )
+                Box(
+                    Modifier.height(36.dp).clip(RoundedCornerShape(10.dp)).clickable {
+                        val p = pano.getText()?.text?.trim().orEmpty()
+                        if (yeni.isBlank() && p.isNotBlank()) yeni = p
+                        if (yeni.isNotBlank()) { akil.anahtarKaydet(yeni); yeni = ""; anahtarAcik = false; dene() }
+                    }.padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text(if (yeni.isBlank()) "Yapıştır" else "Kaydet", style = govde(13.sp, Renk.Altin, FontWeight.SemiBold)) }
+            }
+        }
+        Ayrac()
+        Text("Hızlı mod modeli", style = govde(15.sp, Renk.Yazi, FontWeight.SemiBold))
+        Text("Günlük sohbet ve “Hey Cezerî” cevapları", style = govde(12.5.sp, Renk.Soluk))
+        Spacer(Modifier.height(10.dp))
+        ModelCipleri((modeller.ifEmpty { listOf(hizli) }).sortedByDescending { it.contains("flash", true) }, hizli) { akil.hizliSec(it) }
+        Ayrac()
+        Text("Derin düşün modeli", style = govde(15.sp, Renk.Yazi, FontWeight.SemiBold))
+        Text("Uzun ve zor sorular; biraz daha yavaş", style = govde(12.5.sp, Renk.Soluk))
+        Spacer(Modifier.height(10.dp))
+        ModelCipleri(modeller.ifEmpty { listOf(derin) }, derin) { akil.derinSec(it) }
+        Spacer(Modifier.height(8.dp))
+        Text("Liste, bağlanınca EVREN'den güncel olarak çekilir.", style = govde(11.5.sp, Renk.Soluk))
+        Spacer(Modifier.height(14.dp))
+        Box(
+            Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(14.dp)).background(Renk.TurkuazZemin)
+                .border(1.dp, Renk.TurkuazCizgi, RoundedCornerShape(14.dp)).clickable(enabled = !deniyor) { dene() },
+            contentAlignment = Alignment.Center,
+        ) { Text(if (deniyor) "Deneniyor…" else "Bağlantıyı dene", style = govde(15.sp, Renk.TurkuazYazi, FontWeight.Medium)) }
+    }
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ModelCipleri(liste: List<String>, secili: String, sec: (String) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        liste.forEach { m ->
+            val s = m == secili
+            Box(
+                Modifier.height(38.dp).clip(RoundedCornerShape(12.dp))
+                    .background(if (s) Renk.AltinZemin else Renk.KartKoyu)
+                    .border(1.dp, if (s) Renk.Altin else Renk.Cizgi, RoundedCornerShape(12.dp))
+                    .clickable(role = Role.RadioButton) { sec(m) }.padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text(m, style = govde(13.sp, if (s) Renk.Altin else Renk.SolukAcik, if (s) FontWeight.Medium else FontWeight.Normal)) }
+        }
+    }
+}
+
+@Composable
+private fun HizOlcer() {
+    val son by Olcum.son.collectAsState()
+    val gecmis by Olcum.gecmis.collectAsState()
+    fun ms(v: Long?) = when {
+        v == null -> "—"
+        v >= 1000 -> "%.1f sn".format(v / 1000.0).replace('.', ',')
+        else -> "$v ms"
+    }
+    AyarKarti {
+        val k = son
+        if (k == null) {
+            Text("Henüz ölçüm yok. Cezerî'ye bir şey sor; sözünü bitirmenden ilk sese kadar geçen süre burada görünür.", style = govde(13.sp, Renk.Soluk))
+            return@AyarKarti
+        }
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(ms(k.toplam), style = baslik(40.sp, Renk.Altin))
+            Spacer(Modifier.width(10.dp))
+            Text(if (k.evren) "sözünü bitirmenden ilk sese kadar" else "komut · sunucuya gitmeden", style = govde(13.sp, Renk.SolukAcik), modifier = Modifier.padding(bottom = 6.dp))
+        }
+        Spacer(Modifier.height(14.dp))
+        val enUzun = listOfNotNull(k.uyanma, k.dinleme, k.dusunme, k.ses).maxOrNull()?.coerceAtLeast(1L) ?: 1L
+        OlcumSatiri("Uyanma", k.uyanma, enUzun, Renk.TurkuazAcik, ::ms)
+        OlcumSatiri("Dinleme (sözün yazıya dökülmesi)", k.dinleme, enUzun, Renk.Turkuaz, ::ms)
+        OlcumSatiri("Düşünme · EVREN ilk kelime", k.dusunme, enUzun, Renk.Altin, ::ms)
+        OlcumSatiri("Ses · ilk cümle hazır", k.ses, enUzun, Renk.AltinAcik, ::ms)
+        Ayrac()
+        Row { Text("Son ${gecmis.count { it.evren }} sohbetin ortalaması", style = govde(12.5.sp, Renk.Soluk), modifier = Modifier.weight(1f)); Text(ms(Olcum.ortalama(true)), style = govde(12.5.sp, Renk.SolukAcik)) }
+        Spacer(Modifier.height(6.dp))
+        Row { Text("Komutlar (ara, vakit…) ortalaması", style = govde(12.5.sp, Renk.Soluk), modifier = Modifier.weight(1f)); Text(ms(Olcum.ortalama(false)), style = govde(12.5.sp, Renk.SolukAcik)) }
+        Spacer(Modifier.height(14.dp))
+        Box(
+            Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(13.dp)).background(Renk.KartKoyu)
+                .border(1.dp, Renk.Cizgi, RoundedCornerShape(13.dp)).clickable { Olcum.sifirla() },
+            contentAlignment = Alignment.Center,
+        ) { Text("Ölçümleri sıfırla", style = govde(14.sp, Renk.SolukAcik)) }
+    }
+}
+
+@Composable
+private fun OlcumSatiri(ad: String, deger: Long?, enUzun: Long, renk: androidx.compose.ui.graphics.Color, yaz: (Long?) -> String) {
+    Row { Text(ad, style = govde(13.sp, Renk.Yazi), modifier = Modifier.weight(1f)); Text(yaz(deger), style = govde(13.sp, Renk.Soluk)) }
+    Spacer(Modifier.height(6.dp))
+    Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Renk.KartCizgi)) {
+        if (deger != null) Box(Modifier.fillMaxWidth((deger.toFloat() / enUzun).coerceIn(0.03f, 1f)).height(6.dp).clip(RoundedCornerShape(3.dp)).background(renk))
+    }
+    Spacer(Modifier.height(12.dp))
 }
 
 @Composable

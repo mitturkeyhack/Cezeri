@@ -95,6 +95,7 @@ class UyanikServis : Service() {
     }
 
     private fun uyandi() {
+        com.erkam.cezeri.core.Olcum.uyandi()
         try {
             getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createOneShot(40, 120))
         } catch (_: Exception) {}

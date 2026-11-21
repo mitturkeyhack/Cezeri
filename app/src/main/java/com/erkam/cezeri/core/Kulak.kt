@@ -34,10 +34,13 @@ class Kulak(private val ctx: Context) {
     fun mevcut(): Boolean = SpeechRecognizer.isRecognitionAvailable(ctx) ||
         SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
 
-    fun dinle(sonuc: (Sonuc) -> Unit) {
+    /** İnternetli Google tanıma önce; bağlantı yoksa bir kez telefonun içindeki tanımaya geçer. */
+    fun dinle(sonuc: (Sonuc) -> Unit) = dinle(sonuc, cihazIciZorla = false)
+
+    private fun dinle(sonuc: (Sonuc) -> Unit, cihazIciZorla: Boolean) {
         birak()
         _ara.value = ""
-        val cihazIci = !cihazIciCalismiyor && SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
+        val cihazIci = cihazIciZorla && !cihazIciCalismiyor && SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
         val r = try {
             if (cihazIci) SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx) else normalTanici()
         } catch (e: Exception) {
@@ -53,12 +56,19 @@ class Kulak(private val ctx: Context) {
             sonuc(s)
         }
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { _dinliyor.value = true }
+            override fun onReadyForSpeech(params: Bundle?) { _dinliyor.value = true; Olcum.dinlemeHazir() }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) { _seviye.value = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f) }
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
+            override fun onEndOfSpeech() { Olcum.sozBitti() }
             override fun onError(error: Int) {
+                // Bağlantı yoksa telefonun kendi tanımasıyla bir kez dene
+                if (!cihazIci && !cihazIciCalismiyor && SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx) &&
+                    (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT || error == SpeechRecognizer.ERROR_SERVER)) {
+                    bitti = true
+                    dinle(sonuc, cihazIciZorla = true)
+                    return
+                }
                 // Cihaz içi tanıma Türkçe desteklemiyorsa bir kez normal tanımaya geç
                 if (cihazIci && (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
                         error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ||
@@ -67,7 +77,7 @@ class Kulak(private val ctx: Context) {
                     if (!cihazIciDenendi) {
                         cihazIciDenendi = true
                         bitti = true
-                        dinle(sonuc)
+                        dinle(sonuc, cihazIciZorla = false)
                         return
                     }
                 }
@@ -92,10 +102,10 @@ class Kulak(private val ctx: Context) {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR")
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "tr-TR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 900L)
         }
         _dinliyor.value = true
         try {

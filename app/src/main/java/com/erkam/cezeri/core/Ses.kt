@@ -37,7 +37,7 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
 
     private val prefs = context.applicationContext.getSharedPreferences("ses", Context.MODE_PRIVATE)
     val cezeri = CezeriSesi(context.applicationContext)
-    private val _motor = MutableStateFlow(prefs.getString("motor", MOTOR_CEZERI) ?: MOTOR_CEZERI)
+    private val _motor = MutableStateFlow(prefs.getString("motor", MOTOR_TELEFON) ?: MOTOR_TELEFON)
     /** "cezeri" ya da "telefon" */
     val motor: StateFlow<String> = _motor
     private val _stil = MutableStateFlow(prefs.getString("stil", "M1") ?: "M1")
@@ -80,7 +80,7 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
         tts.setSpeechRate(0.96f)
         tts.setPitch(0.92f)
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) { _androidKonusuyor.value = true }
+            override fun onStart(utteranceId: String?) { _androidKonusuyor.value = true; Olcum.ilkCikti() }
             override fun onDone(utteranceId: String?) { bitti(utteranceId) }
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) { bitti(utteranceId) }
@@ -119,6 +119,7 @@ class Ses(context: Context) : TextToSpeech.OnInitListener {
     fun konus(metin: String, temizle: Boolean = true, bitince: (() -> Unit)? = null) {
         val m = metin.trim()
         if (m.isEmpty()) { bitince?.let { main.post(it) }; return }
+        Olcum.seseVerildi()
         if (cezeriyle()) {
             if (temizle && hazir) { this.bitince.clear(); tts.stop(); _androidKonusuyor.value = false }
             cezeri.soyle(m, temizle, bitince) { yedekMetin, yedekBitince -> telefonla(yedekMetin, false, yedekBitince) }

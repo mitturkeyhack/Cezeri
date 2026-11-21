@@ -254,6 +254,7 @@ class CezeriSesi(private val ctx: Context) {
         try {
             t.flush()
             t.play()
+            com.erkam.cezeri.core.Olcum.ilkCikti()
             var i = 0
             val parca = oran / 10
             while (i < wav.size) {
