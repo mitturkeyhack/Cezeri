@@ -66,6 +66,7 @@ class CezeriSesi(private val ctx: Context) {
     fun indir(sonra: (() -> Unit)? = null) {
         if (tamamMi()) { hazirla(stil); sonra?.invoke(); return }
         if (indirme?.isActive == true) return
+        _durum.value = Durum.Iniyor(0, 0)
         indirme = scope.launch {
             try {
                 val boyutlar = DOSYALAR.associateWith { boyutSor(it) }

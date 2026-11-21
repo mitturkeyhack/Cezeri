@@ -127,6 +127,8 @@ class Asistan(private val a: CezeriApp) {
                 if (v is Uyanma.ModelDurumu.Hazir && uyanma.acik && a.onPlanda) UyanikServis.baslat(a)
             }
         }
+        // Konum izni varsa ve konum yoksa hemen bul (vakit kartı ve hatırlatıcı için)
+        if (a.konum.izinVar() && a.konum.kayitli() == null) a.konum.guncelle { com.erkam.cezeri.asistan.VakitHatirlatici.planla(a) }
         // Açılışta EVREN bağlantısını sessizce dene (model listesini de tazeler)
         if (akil.anahtar().isNotBlank()) scope.launch { akil.dene() }
     }
@@ -1080,6 +1082,7 @@ class Asistan(private val a: CezeriApp) {
     fun bugunkuVakitler(): Namaz.Gun? = a.konum.kayitli()?.let { Namaz.bugun(it.first, it.second) }
     fun konumGuncelle() = a.konum.guncelle { com.erkam.cezeri.asistan.VakitHatirlatici.planla(a) }
     fun konumIzniVar() = a.konum.izinVar()
+    val konumAraniyor get() = a.konum.araniyor
 
     private fun notlariYenile() {
         _durum.update { it.copy(notlar = hafiza.notlar()) }

@@ -18,6 +18,8 @@ class Konum(private val ctx: Context) {
     private val lm = ctx.getSystemService(LocationManager::class.java)
     private val main = Handler(Looper.getMainLooper())
 
+    private val _araniyor = MutableStateFlow(false)
+    val araniyor: StateFlow<Boolean> = _araniyor
     private val _konum = MutableStateFlow(kayitli())
     val konum: StateFlow<Pair<Double, Double>?> = _konum
 
@@ -40,11 +42,12 @@ class Konum(private val ctx: Context) {
     fun guncelle(bitince: ((Pair<Double, Double>?) -> Unit)? = null) {
         if (!izinVar()) { bitince?.invoke(kayitli()); return }
         var verildi = false
-        fun ver() { if (!verildi) { verildi = true; bitince?.invoke(kayitli()) } }
+        _araniyor.value = true
+        fun ver() { _araniyor.value = false; if (!verildi) { verildi = true; bitince?.invoke(kayitli()) } }
         try {
             val son = lm.getProviders(true).mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }.maxByOrNull { it.time }
-            if (son != null) { kaydet(son); ver() }
-            val saglayici = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.FUSED_PROVIDER)
+            if (son != null) { kaydet(son); val b = bitince; verildi = true; b?.invoke(kayitli()) }
+            val saglayici = listOf(LocationManager.FUSED_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
                 .firstOrNull { runCatching { lm.isProviderEnabled(it) }.getOrDefault(false) }
             if (saglayici == null) { ver(); return }
             val iptal = CancellationSignal()

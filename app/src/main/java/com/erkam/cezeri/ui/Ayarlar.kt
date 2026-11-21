@@ -470,12 +470,15 @@ private fun NamazBolumu(vm: Asistan, d: Durum, yenile: Int, tazele: () -> Unit) 
     var once by remember { mutableIntStateOf(VakitHatirlatici.once(ctx)) }
     var sesli by remember { mutableStateOf(VakitHatirlatici.sesli(ctx)) }
     val tamZaman = remember(yenile) { VakitHatirlatici.tamZamanliIzin(ctx) }
+    val araniyor by vm.konumAraniyor.collectAsState()
+    LaunchedEffect(izin) { if (izin && d.konum == null) vm.konumGuncelle() }
     AyarKarti {
         AyarSatiri(
             "Konum",
             when {
                 !izin -> "Vakitler ve kıble için gerekli"
-                d.konum == null -> "Konum bulunuyor…"
+                d.konum == null && araniyor -> "Konum bulunuyor…"
+                d.konum == null -> "Bulunamadı · konum servisi açıkken tekrar dokun"
                 else -> "Kayıtlı · %.3f, %.3f".format(d.konum.first, d.konum.second)
             },
             Ik.BILGI,
@@ -553,7 +556,7 @@ private fun SesBolumu(vm: Asistan) {
             "Cezerî'nin kendi sesi",
             when (val d = durum) {
                 is CezeriSesi.Durum.Yok -> "Bir kez indirilir · olgun, akıcı erkek sesi"
-                is CezeriSesi.Durum.Iniyor -> "İndiriliyor · ${d.inen / 1_000_000} / ${d.toplam / 1_000_000} MB"
+                is CezeriSesi.Durum.Iniyor -> if (d.toplam <= 0) "İndirme hazırlanıyor…" else "İndiriliyor · ${d.inen / 1_000_000} / ${d.toplam / 1_000_000} MB"
                 CezeriSesi.Durum.Yukleniyor -> "Hazırlanıyor"
                 CezeriSesi.Durum.Hazir -> if (cezeri) "Kullanılıyor · telefonda üretilir" else "Hazır"
                 is CezeriSesi.Durum.Hata -> d.mesaj
